@@ -18,6 +18,13 @@ static const int MOBILE_DCH_POWER = 570;
 static const int MOBILE_FACH_INACTIVITY_TIMER = 6;
 static const int MOBILE_DCH_INACTIVITY_TIMER = 4;
 
+/* Information needed to make calculations (based on power state inference):
+ * 1) Uplink/downlink queue size
+ *    - Look in /proc/net/{tcp,udp,raw} and add up tx_queue and rx_queue
+ * 2) Packet rate and data rate (bytes/sec)
+ *    - Look in /proc/net/dev ; sample over time to get rates
+ */
+
 static inline int estimate_mobile_energy_cost(int sock, size_t datalen)
 {
     int power = 0;
