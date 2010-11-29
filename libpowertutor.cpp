@@ -51,14 +51,13 @@ static inline int estimate_wifi_energy_cost(int sock, size_t datalen)
 {
     int power = 0;
     
-    if (wifi_transmitting) {
-        power = WIFI_TRANSMIT_POWER;
+    // The wifi radio is only in the transmit state for a very short time,
+    //  and that power consumption is factored into the high/low states'
+    //  power calculation.
+    if (wifi_high_state) {
+        power = WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
     } else {
-        if (wifi_high_state) {
-            power = WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
-        } else {
-            power = WIFI_LOW_POWER;
-        }
+        power = WIFI_LOW_POWER;
     }
     
     // TODO: calculate projected energy cost of this transfer,
