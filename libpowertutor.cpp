@@ -36,6 +36,12 @@ power_coeff(MobileState state)
 static const int MOBILE_DCH_THRESHOLD_DOWN = 119;
 static const int MOBILE_DCH_THRESHOLD_UP = 151;
 
+static inline int
+get_dch_threshold(bool downlink)
+{
+    return downlink ? MOBILE_DCH_THRESHOLD_DOWN ? MOBILE_DCH_THRESHOLD_UP;
+}
+
 // in seconds
 static const int MOBILE_FACH_INACTIVITY_TIMER = 6;
 static const int MOBILE_DCH_INACTIVITY_TIMER = 4;
@@ -80,55 +86,170 @@ calculate_energy(size_t datalen, size_t bandwidth, int power)
     return energy;
 }
 
+static inline MobileState
+get_mobile_state()
+{
+    /* TODO - IMPL */
+}
+
+static inline int 
+get_ip_addr(const char *ifname, struct in_addr *ip_addr)
+{
+    if (strlen(ifname) > IF_NAMESIZE) {
+        dbgprintf_always("Error: ifname too long (longer than %d)\n", IF_NAMESIZE);
+        return -1;
+    }
+
+    struct ifreq ifr;
+    strcpy(ifr.ifr_name, ifname);
+    ifr.ifr_addr.sa_family = AF_INET;
+
+    int sock = socket(PF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return sock;
+    }
+    int rc = ioctl(sock, SIOCGIFADDR, &ifr);
+    if (rc == 0) {
+        struct sockaddr_in *inaddr = (struct sockaddr_in*)&ifr.ifr_addr;
+        memcpy(ip_addr, &inaddr->sin_addr, sizeof(ip_addr));
+    } else {
+        perror("getting ip addr: ioctl");
+    }
+
+    close(sock);
+    return rc;
+}
+
+static inline int
+get_mobile_queue_len(bool downlink)
+{
+    const char *iface = "rnmet0";
+    struct in_addr mobile_addr;
+    if (get_ip_addr(iface, &mobile_addr) != 0) {
+        return 0;
+    }
+    
+    char filename[50];
+    strcpy(filename, "/proc/net/");
+    
+    char *suffix = filename + strlen(filename);
+    
+    int up_bytes = 0, down_byte = 0;
+    
+    const char *suffixes[] = {"tcp", "udp", "raw"};
+    for (int i = 0; i < 3; ++i) {
+        strcpy(suffix, suffixes[i]);
+        ifstream in(filename);
+        string junk;
+        getline(in, junk); // skip the header line
+        while (in) {
+            //  0              1           2    3                 4
+            // sl  local_address rem_address   st tx_queue:rx_queue ...
+            // 0:  0100007F:13AD 00000000:0000 0A 00000000:00000000 ...
+            in_addr_t addr;
+            in >> junk >> hex >> addr;
+            if (!in) {
+                // log failure
+                break;
+            }
+            if (addr != mobile_addr.s_addr) {
+                continue;
+            }
+            int tx_bytes = 0, rx_bytes = 0;
+            in >> junk >> junk >> junk;
+            in >> hex >> tx_bytes;
+            in.ignore(1);
+            in >> hex >> rx_bytes;
+            if (!in) {
+                // log failure
+                break;
+            }
+            getline(in, junk);
+            
+            up_bytes += tx_bytes;
+            down_bytes += rx_bytes;
+        }
+        in.close();
+    }
+    
+    return downlink ? down_bytes : up_bytes;
+}
+
 static inline int 
 estimate_mobile_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
 {
     int power = 0;
-    MobileState mobile_state = get_mobile_state();
+    MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
-    int queue_len = get_queue_len(downlink);
+    int queue_len = get_mobile_queue_len(downlink);
     int threshold = get_dch_threshold(downlink);
-    if ((queue_len + datalen) >= threshold) {
+    if (old_state == MOBILE_POWER_STATE_DCH ||
+        (queue_len + datalen) >= threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
     }
     
+    double duration = ((double)datalen) / bandwidth;
     int fach_energy = 0, dch_energy = 0;
-    if (mobile_state == MOBILE_POWER_STATE_IDLE) {
+    if (old_state == MOBILE_POWER_STATE_IDLE) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
             // FACH inactivity timeout only; data transferred in DCH
             fach_energy = MOBILE_FACH_POWER * MOBILE_FACH_INACTIVITY_TIMER;
             
-            double duration = ((double)datalen) / bandwidth;
             duration += MOBILE_DCH_INACTIVITY_TIMER;
             dch_energy = MOBILE_DCH_POWER * duration;
         } else {
             // cost of transferring data in FACH state + FACH timeout
-            double duration = ((double) datalen) / bandwidth;
             duration += MOBILE_FACH_INACTIVITY_TIMER;
             fach_energy = MOBILE_FACH_POWER * duration;
         }
-    } else if (mobile_state == MOBILE_POWER_STATE_FACH) {
+    } else if (old_state == MOBILE_POWER_STATE_FACH) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
             // DCH + extending FACH time by postponing inactivity timeout
-            // TODO
+            duration += MOBILE_DCH_INACTIVITY_TIMER;
+            dch_energy = MOBILE_DCH_POWER * duration;
+            
+            // extending FACH time
+            fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+                                MOBILE_FACH_INACTIVITY_TIMER);
+            fach_energy = fach_duration * MOBILE_FACH_POWER;
         } else {
             // extending FACH time
-            // TODO
+            fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+                                MOBILE_FACH_INACTIVITY_TIMER);
+            duration += fach_duration;
+            
+            fach_energy = duration * MOBILE_FACH_POWER;
         }
     } else {
-        assert(mobile_state == MOBILE_POWER_STATE_DCH);
+        assert(old_state == MOBILE_POWER_STATE_DCH);
         // extending DCH time by postponing inactivity timeout
-        // TODO
+        double dch_duration = min(time_since_last_activity(TYPE_MOBILE), 
+                                  MOBILE_DCH_INACTIVITY_TIMER);
+        duration += dch_duration;
+        dch_energy = duration * MOBILE_DCH_POWER;
     }
     // XXX: the above can probably be simplified by calculating
-    // XXX:  fach_ and dch_ as if mobile_state was IDLE, then subtracting
+    // XXX:  fach_ and dch_ as if old_state was IDLE, then subtracting
     // XXX:  to account for the cases where it's not, in which cases
     // XXX:  we only pay a portion of the FACH/DCH energy with this
     // XXX:  transfer, having paid the full amount in previous transfers.
     
     // account for possible floating-point math errors
     return max(0, fach_energy) + max(0, dch_energy);
+}
+
+static inline int
+wifi_channel_rate()
+{
+    /* TODO - IMPL */
+}
+
+static inline int
+wifi_data_rate()
+{
+    /* TODO - IMPL */
 }
 
 static inline int 
