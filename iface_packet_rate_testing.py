@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import time, sys
+import time, sys, math
 from subprocess import Popen, PIPE
 
 def get_lines(filename):
@@ -14,32 +14,39 @@ def get_ip_hex(iface):
     ints.reverse()
     return "%02X%02X%02X%02X" % tuple(ints)
 
-def get_rates(ifaces):
-    rates = {}
+def get_counts(ifaces):
+    counts = {}
     for iface in ifaces:
-        iface_hex = get_ip_hex(iface)
-        rates[iface_hex] = {
-            "bytes_down" : -1, "bytes_up" : -1,
-            "packets_down" : -1, "packets_up" : -1
+        counts[iface] = {
+            "packets" : {
+                "down" : -1, "up" : -1
+            },
+            "bytes" : {
+                "down" : -1, "up" : -1
+            }
         }
     
     filename = '/proc/net/dev'
     lines = [line.strip() for line in get_lines(filename)]
     lines = lines[2:] # strip the header lines
     for line in lines:
+        #  Receive                      ...        Transmit
         #  0      1          2                       9        10
         # iface  bytes    packets (...6 fields...) bytes    packets ...
         blocks = line.split()
-        local_iface_hex = blocks[0].split(':')[0]
-        if local_iface_hex not in rates:
+        local_iface_name = blocks[0][:-1] # trim trailing ':'
+        if local_iface_name not in counts:
             continue
         
         block = blocks[4]
-        bytes_down, bytes_up = [int(field) for field in block.split(':')]
-        rates[local_iface_hex]["down_bytes"] += down_q
-        rates[local_iface_hex]["up_bytes"] += up_q
+        bytes_down, bytes_up = int(blocks[1]), int(blocks[9])
+        packets_down, packets_up = int(blocks[2]), int(blocks[10])
+        counts[local_iface_name]["bytes"]["down"] += bytes_down
+        counts[local_iface_name]["bytes"]["up"] += bytes_up
+        counts[local_iface_name]["packets"]["down"] += packets_down
+        counts[local_iface_name]["packets"]["up"] += packets_up
     
-    return rates
+    return counts
 
 def get_ifaces():
     ifaces = []
@@ -50,32 +57,76 @@ def get_ifaces():
         blocks = line.split()
         ifname = blocks[0]
         up = (blocks[1] == "UP")
-        ifip = blocks[2]
         if up and ifname != "lo":
-            ifaces.append(ifip)
+            ifaces.append(ifname)
     return ifaces
 
 def main():
     sample_rate = 1.0
-    last_rates = {}
+    last_counts = {}
+    last_diffs = {}
+    sys.stdout.write("%10s | " % "")
     for iface in get_ifaces():
-        last_rates[get_ip_hex(iface)] = {"down_bytes":-1, "up_bytes":-1}
+        last_counts[iface] = {
+            "packets" : {
+                "down" : -1, "up" : -1
+            },
+            "bytes" : {
+                "down" : -1, "up" : -1
+            }
+        }
         
         sys.stdout.write("%-25s" % iface)
     print ""
     
+    init = False
+    last_update = time.time()
     while True:
         ifaces = get_ifaces()
-        rates = get_rates(ifaces)
-        if rates != last_rates:
-            for key in rates.keys():
-                down = rates[key]["down_bytes"]
-                up = rates[key]["up_bytes"]
-                sys.stdout.write("down: %d   up: %d       " % (down, up))
-                last_rates[key]["down_bytes"] = down
-                last_rates[key]["up_bytes"] = up
-            print ""
-                
+        counts = get_counts(ifaces)
+
+        if not init:
+            init = True
+            last_counts = dict(counts)
+            last_update = time.time()
+            time.sleep(sample_rate)
+            continue
+
+        now = time.time()
+        diffs = {}
+        for i in counts:
+            diffs[i] = {}
+            for j in counts[i]:
+                diffs[i][j] = {}
+                for k in counts[i][j]:
+                    diffs[i][j][k] = counts[i][j][k] - last_counts[i][j][k]
+                    diffs[i][j][k] = math.ceil(diffs[i][j][k] /
+                                               (now - last_update))
+        
+        last_counts = dict(counts)
+        last_update = now
+        
+        if last_diffs == diffs:
+            time.sleep(sample_rate)
+            continue
+        
+        last_diffs = diffs
+
+        msgs = {}
+        for iface in diffs:
+            for category in diffs[iface]:
+                if category not in msgs:
+                    msgs[category] = ("%-10s | " % category)
+
+                for direction in diffs[iface][category]:
+                    val = diffs[iface][category][direction]
+                    field = "%s: %d" % (direction, val)
+                    msgs[category] += ("%-13s " % field)
+
+        for category in msgs:
+            print msgs[category]
+        print ""
+
         time.sleep(sample_rate)
 
 if __name__ == '__main__':

@@ -1,4 +1,26 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <functional>
+
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <assert.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <float.h>
+
+#include <cutils/log.h>
 #include "libpowertutor.h"
+#include "timeops.h"
+
+using std::ifstream; using std::hex; using std::string;
+using std::min; using std::max;
 
 // PowerTutor [1] power model for the HTC Dream.
 // [1] Zhang et al. "Accurate Online Power Estimation and Automatic Battery
@@ -39,12 +61,12 @@ static const int MOBILE_DCH_THRESHOLD_UP = 151;
 static inline int
 get_dch_threshold(bool downlink)
 {
-    return downlink ? MOBILE_DCH_THRESHOLD_DOWN ? MOBILE_DCH_THRESHOLD_UP;
+    return downlink ? MOBILE_DCH_THRESHOLD_DOWN : MOBILE_DCH_THRESHOLD_UP;
 }
 
 // in seconds
-static const int MOBILE_FACH_INACTIVITY_TIMER = 6;
-static const int MOBILE_DCH_INACTIVITY_TIMER = 4;
+static const double MOBILE_FACH_INACTIVITY_TIMER = 6.0;
+static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
 
 /* Information needed to make calculations (based on power state inference):
  * 1) Uplink/downlink queue size
@@ -74,29 +96,20 @@ static const int MOBILE_DCH_INACTIVITY_TIMER = 4;
  *       can make those calculations.
  */
 
-static inline int
-calculate_energy(size_t datalen, size_t bandwidth, int power)
-{
-    // rough estimation of how long the radio will remain active
-    //   when sending this chunk of data.
-    // This formulation is naive and may or may not work.
-    assert(bandwidth > 0);
-    double duration = ((double)datalen) / bandwidth;
-    int energy = duration * power;
-    return energy;
-}
+static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
 
 static inline MobileState
 get_mobile_state()
 {
-    /* TODO - IMPL */
+    // XXX: LOCK?
+    return mobile_state;
 }
 
 static inline int 
 get_ip_addr(const char *ifname, struct in_addr *ip_addr)
 {
     if (strlen(ifname) > IF_NAMESIZE) {
-        dbgprintf_always("Error: ifname too long (longer than %d)\n", IF_NAMESIZE);
+        LOGE("Error: ifname too long (longer than %d)\n", IF_NAMESIZE);
         return -1;
     }
 
@@ -106,7 +119,7 @@ get_ip_addr(const char *ifname, struct in_addr *ip_addr)
 
     int sock = socket(PF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        perror("socket");
+        LOGE("socket: %s\n", strerror(errno));
         return sock;
     }
     int rc = ioctl(sock, SIOCGIFADDR, &ifr);
@@ -114,14 +127,14 @@ get_ip_addr(const char *ifname, struct in_addr *ip_addr)
         struct sockaddr_in *inaddr = (struct sockaddr_in*)&ifr.ifr_addr;
         memcpy(ip_addr, &inaddr->sin_addr, sizeof(ip_addr));
     } else {
-        perror("getting ip addr: ioctl");
+        LOGE("getting ip addr: ioctl: %s\n", strerror(errno));
     }
 
     close(sock);
     return rc;
 }
 
-static inline int
+static inline size_t
 get_mobile_queue_len(bool downlink)
 {
     const char *iface = "rnmet0";
@@ -135,7 +148,7 @@ get_mobile_queue_len(bool downlink)
     
     char *suffix = filename + strlen(filename);
     
-    int up_bytes = 0, down_byte = 0;
+    size_t up_bytes = 0, down_bytes = 0;
     
     const char *suffixes[] = {"tcp", "udp", "raw"};
     for (int i = 0; i < 3; ++i) {
@@ -150,7 +163,7 @@ get_mobile_queue_len(bool downlink)
             in_addr_t addr;
             in >> junk >> hex >> addr;
             if (!in) {
-                // log failure
+                LOGE("Failed to parse ip addr\n");
                 break;
             }
             if (addr != mobile_addr.s_addr) {
@@ -162,7 +175,7 @@ get_mobile_queue_len(bool downlink)
             in.ignore(1);
             in >> hex >> rx_bytes;
             if (!in) {
-                // log failure
+                LOGE("Failed to parse queue size\n");
                 break;
             }
             getline(in, junk);
@@ -176,15 +189,32 @@ get_mobile_queue_len(bool downlink)
     return downlink ? down_bytes : up_bytes;
 }
 
+static struct timeval last_mobile_activity;
+static struct timeval last_wifi_activity;
+
+static inline double
+time_since_last_activity(NetworkType type)
+{
+    // XXX: LOCK?
+    struct timeval dur, now;
+    TIME(now);
+    if (type == TYPE_MOBILE) {
+        TIMEDIFF(last_mobile_activity, now, dur);
+    } else if (type == TYPE_MOBILE) {
+        TIMEDIFF(last_wifi_activity, now, dur);
+    } else assert(0);
+    
+    return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
+}
+
 static inline int 
 estimate_mobile_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
 {
-    int power = 0;
     MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
-    int queue_len = get_mobile_queue_len(downlink);
-    int threshold = get_dch_threshold(downlink);
+    size_t queue_len = get_mobile_queue_len(downlink);
+    size_t threshold = get_dch_threshold(downlink);
     if (old_state == MOBILE_POWER_STATE_DCH ||
         (queue_len + datalen) >= threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
@@ -211,13 +241,13 @@ estimate_mobile_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
             dch_energy = MOBILE_DCH_POWER * duration;
             
             // extending FACH time
-            fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
-                                MOBILE_FACH_INACTIVITY_TIMER);
+            double fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+                                       MOBILE_FACH_INACTIVITY_TIMER);
             fach_energy = fach_duration * MOBILE_FACH_POWER;
         } else {
             // extending FACH time
-            fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
-                                MOBILE_FACH_INACTIVITY_TIMER);
+            double fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+                                       MOBILE_FACH_INACTIVITY_TIMER);
             duration += fach_duration;
             
             fach_energy = duration * MOBILE_FACH_POWER;
@@ -240,16 +270,34 @@ estimate_mobile_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
     return max(0, fach_energy) + max(0, dch_energy);
 }
 
+static inline bool
+wifi_high_state(bool downlink, size_t datalen)
+{
+    /* TODO - IMPL */
+    (void)downlink;
+    (void)datalen;
+    return false;
+}
+
 static inline int
 wifi_channel_rate()
 {
     /* TODO - IMPL */
+    return 54;
 }
 
 static inline int
 wifi_data_rate()
 {
     /* TODO - IMPL */
+    return 0;
+}
+
+static inline int
+wifi_packet_rate()
+{
+    /* TODO - IMPL */
+    return 0;
 }
 
 static inline int 
@@ -266,13 +314,13 @@ estimate_wifi_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
     // The wifi radio is only in the transmit state for a very short time,
     //  and that power consumption is factored into the high/low states'
     //  power calculation.
-    if (wifi_high_state) {
+    if (wifi_high_state(downlink, datalen)) {
         power = WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
     } else {
         power = WIFI_LOW_POWER;
     }
     
-    return calculate_energy(datalen, bandwidth, power);
+    return (((double)datalen) / bandwidth) * power;
 }
 
 // XXX: It may be useful/necessary to factor into these calculations how
@@ -287,8 +335,10 @@ int estimate_energy_cost(NetworkType type, bool downlink,
                          size_t datalen, size_t bandwidth)
 {
     if (type == TYPE_MOBILE) {
-        return estimate_mobile_power_cost(downlink, datalen, bandwidth);
+        return estimate_mobile_energy_cost(downlink, datalen, bandwidth);
     } else if (type == TYPE_WIFI) {
-        return estimate_wifi_power_cost(downlink, datalen, bandwidth);
+        return estimate_wifi_energy_cost(downlink, datalen, bandwidth);
     } else assert(false);
+    
+    return -1;
 }
