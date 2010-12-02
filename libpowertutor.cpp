@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <functional>
 
@@ -20,6 +21,7 @@
 #include "timeops.h"
 
 using std::ifstream; using std::hex; using std::string;
+using std::istringstream;
 using std::min; using std::max;
 
 // PowerTutor [1] power model for the HTC Dream.
@@ -105,7 +107,7 @@ get_mobile_state()
     return mobile_state;
 }
 
-static inline int 
+static int 
 get_ip_addr(const char *ifname, struct in_addr *ip_addr)
 {
     if (strlen(ifname) > IF_NAMESIZE) {
@@ -134,13 +136,14 @@ get_ip_addr(const char *ifname, struct in_addr *ip_addr)
     return rc;
 }
 
-static inline size_t
+int
 get_mobile_queue_len(bool downlink)
 {
-    const char *iface = "rnmet0";
+    const char *iface = "rmnet0";
     struct in_addr mobile_addr;
     if (get_ip_addr(iface, &mobile_addr) != 0) {
-        return 0;
+        LOGE("Failed to get ip addr of %s\n", iface);
+        return -1;
     }
     
     char filename[50];
@@ -153,18 +156,19 @@ get_mobile_queue_len(bool downlink)
     const char *suffixes[] = {"tcp", "udp", "raw"};
     for (int i = 0; i < 3; ++i) {
         strcpy(suffix, suffixes[i]);
-        ifstream in(filename);
-        string junk;
-        getline(in, junk); // skip the header line
-        while (in) {
+        ifstream infile(filename);
+        string junk, line;
+        getline(infile, junk); // skip the header line
+        while (getline(infile, line)) {
             //  0              1           2    3                 4
             // sl  local_address rem_address   st tx_queue:rx_queue ...
             // 0:  0100007F:13AD 00000000:0000 0A 00000000:00000000 ...
             in_addr_t addr;
+            istringstream in(line);
             in >> junk >> hex >> addr;
             if (!in) {
                 LOGE("Failed to parse ip addr\n");
-                break;
+                return -1;
             }
             if (addr != mobile_addr.s_addr) {
                 continue;
@@ -176,14 +180,14 @@ get_mobile_queue_len(bool downlink)
             in >> hex >> rx_bytes;
             if (!in) {
                 LOGE("Failed to parse queue size\n");
-                break;
+                return -1;
             }
-            getline(in, junk);
+            //getline(in, junk);
             
             up_bytes += tx_bytes;
             down_bytes += rx_bytes;
         }
-        in.close();
+        infile.close();
     }
     
     return downlink ? down_bytes : up_bytes;
@@ -207,14 +211,14 @@ time_since_last_activity(NetworkType type)
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
 
-static inline int 
-estimate_mobile_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
+static int 
+estimate_mobile_energy_cost(bool downlink, int datalen, size_t bandwidth)
 {
     MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
-    size_t queue_len = get_mobile_queue_len(downlink);
-    size_t threshold = get_dch_threshold(downlink);
+    int queue_len = get_mobile_queue_len(downlink);
+    int threshold = get_dch_threshold(downlink);
     if (old_state == MOBILE_POWER_STATE_DCH ||
         (queue_len + datalen) >= threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
@@ -293,7 +297,7 @@ wifi_data_rate()
     return 0;
 }
 
-static inline int
+int
 wifi_packet_rate()
 {
     /* TODO - IMPL */
@@ -306,7 +310,7 @@ wifi_channel_rate_component()
     return (48 - 0.768 * wifi_channel_rate()) * wifi_data_rate();
 }
 
-static inline int 
+static int 
 estimate_wifi_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
 {
     int power = 0;
