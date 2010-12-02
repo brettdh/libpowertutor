@@ -16,9 +16,11 @@
 #include <errno.h>
 #include <float.h>
 
-#include <cutils/log.h>
 #include "libpowertutor.h"
 #include "timeops.h"
+
+#define LOG_TAG "libpowertutor"
+#include <cutils/log.h>
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
@@ -283,11 +285,44 @@ wifi_high_state(bool downlink, size_t datalen)
     return false;
 }
 
-static inline int
+//#include <wifi.h>
+
+int
 wifi_channel_rate()
 {
-    /* TODO - IMPL */
+    /* Adapted from 
+     * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
+     */
+#if 1
     return 54;
+#else
+    char reply[256];
+    memset(reply, 0, sizeof(reply));
+    int linkspeed = -1;
+    
+    size_t reply_len = sizeof(reply) - 1;
+    
+    int rc = wifi_connect_to_supplicant();
+    if (rc < 0) {
+        LOGE("Failed to connect to supplicant\n");
+        return rc;
+    }
+    if (wifi_command("DRIVER LINKSPEED", reply, &reply_len) != 0) {
+        LOGE("DRIVER LINKSPEED command failed\n");
+        wifi_close_supplicant_connection();
+        return -1;
+    } else {
+        // Strip off trailing newline
+        if (reply_len > 0 && reply[reply_len-1] == '\n')
+            reply[reply_len-1] = '\0';
+        else
+            reply[reply_len] = '\0';
+    }
+    wifi_close_supplicant_connection();
+    
+    sscanf(reply, "%*s %u", &linkspeed);
+    return linkspeed;
+#endif
 }
 
 static inline int
