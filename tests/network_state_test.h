@@ -8,6 +8,7 @@ class NetworkStateTest : public CppUnit::TestFixture {
     CPPUNIT_TEST_SUITE(NetworkStateTest);
     CPPUNIT_TEST(testChannelRate);
     CPPUNIT_TEST(testQueueSize);
+    CPPUNIT_TEST(testWifiParams);
     CPPUNIT_TEST_SUITE_END();    
 
   public:
@@ -16,6 +17,7 @@ class NetworkStateTest : public CppUnit::TestFixture {
 
     void testChannelRate();
     void testQueueSize();
+    void testWifiParams();
 };
 
 #endif /* end of include guard: NETWORK_STATE_TEST_H_1HOUZMOH */

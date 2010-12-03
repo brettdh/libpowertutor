@@ -15,6 +15,9 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <float.h>
+#include <math.h>
+#include <pthread.h>
+#include "pthread_util.h"
 
 #include "libpowertutor.h"
 #include "timeops.h"
@@ -100,12 +103,14 @@ static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
  *       can make those calculations.
  */
 
+pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
+static struct timeval last_mobile_activity;
 
 static inline MobileState
 get_mobile_state()
 {
-    // XXX: LOCK?
+    PthreadScopedLock lock(&mobile_state_lock);
     return mobile_state;
 }
 
@@ -195,21 +200,15 @@ get_mobile_queue_len(bool downlink)
     return downlink ? down_bytes : up_bytes;
 }
 
-static struct timeval last_mobile_activity;
-static struct timeval last_wifi_activity;
-
 static inline double
-time_since_last_activity(NetworkType type)
+time_since_last_mobile_activity()
 {
-    // XXX: LOCK?
     struct timeval dur, now;
     TIME(now);
-    if (type == TYPE_MOBILE) {
+    {
+        PthreadScopedLock lock(&mobile_state_lock);
         TIMEDIFF(last_mobile_activity, now, dur);
-    } else if (type == TYPE_MOBILE) {
-        TIMEDIFF(last_wifi_activity, now, dur);
-    } else assert(0);
-    
+    }
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
 
@@ -247,12 +246,12 @@ estimate_mobile_energy_cost(bool downlink, int datalen, size_t bandwidth)
             dch_energy = MOBILE_DCH_POWER * duration;
             
             // extending FACH time
-            double fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+            double fach_duration = min(time_since_last_mobile_activity(), 
                                        MOBILE_FACH_INACTIVITY_TIMER);
             fach_energy = fach_duration * MOBILE_FACH_POWER;
         } else {
             // extending FACH time
-            double fach_duration = min(time_since_last_activity(TYPE_MOBILE), 
+            double fach_duration = min(time_since_last_mobile_activity(), 
                                        MOBILE_FACH_INACTIVITY_TIMER);
             duration += fach_duration;
             
@@ -261,7 +260,7 @@ estimate_mobile_energy_cost(bool downlink, int datalen, size_t bandwidth)
     } else {
         assert(old_state == MOBILE_POWER_STATE_DCH);
         // extending DCH time by postponing inactivity timeout
-        double dch_duration = min(time_since_last_activity(TYPE_MOBILE), 
+        double dch_duration = min(time_since_last_mobile_activity(), 
                                   MOBILE_DCH_INACTIVITY_TIMER);
         duration += dch_duration;
         dch_energy = duration * MOBILE_DCH_POWER;
@@ -326,24 +325,135 @@ wifi_channel_rate()
 #endif
 }
 
-static inline int
-wifi_data_rate()
+pthread_mutex_t wifi_state_lock = PTHREAD_MUTEX_INITIALIZER;
+enum dir {DOWN=0, UP};
+static int wifi_last_bytes[2] = {-1, -1};
+static int wifi_last_packets[2] = {-1, -1};
+static int wifi_data_rates[2] = {-1, -1};
+static int wifi_packet_rates[2] = {-1, -1};
+struct timeval last_wifi_observation = {0, 0};
+
+// caller must hold wifi_state_lock
+static void calc_rates(int *wifi_rates, int *wifi_last, int *current,
+                       double duration)
 {
-    /* TODO - IMPL */
+    for (int i = DOWN; i <= UP; ++i) {
+        wifi_rates[i] = (int)ceil((current[i] - wifi_last[i]) / duration);
+    }
+}
+
+int
+update_wifi_estimated_rates()
+{
+    const char *iface = "tiwlan0";
+    size_t iface_len = strlen(iface);
+    
+    char filename[] = "/proc/net/dev";
+    
+    struct timeval now;
+    
+    ifstream infile(filename);
+    string junk, line;
+    
+    // skip the header lines
+    getline(infile, junk);
+    getline(infile, junk);
+    
+    while (getline(infile, line)) {
+        //  Receive                      ...        Transmit
+        //  0      1          2                       9        10
+        // iface  bytes    packets (...6 fields...) bytes    packets ...
+        string cur_iface;
+        istringstream in(line);
+        in >> cur_iface;
+        if (!in) {
+            LOGE("Failed to parse ip addr\n");
+            return -1;
+        }
+        if (cur_iface.compare(0, iface_len, iface) != 0) {
+            continue;
+        }
+        
+        int bytes[2] = {0,0}, packets[2] = {0,0};
+        in >> bytes[DOWN] >> packets[DOWN];
+        in >> junk >> junk >> junk
+           >> junk >> junk >> junk;
+        in >> bytes[UP] >> packets[UP];
+        if (!in) {
+            LOGE("Failed to parse byte/packet counts\n");
+            return -1;
+        }
+        //getline(in, junk);
+
+        TIME(now);
+        PthreadScopedLock lock(&wifi_state_lock);
+        if (wifi_last_bytes[DOWN] == -1) {
+            assert(wifi_last_bytes[UP] == -1 &&
+                   wifi_last_packets[DOWN] == -1 &&
+                   wifi_last_packets[UP] == -1 &&
+                   wifi_data_rates[DOWN] == -1 &&
+                   wifi_data_rates[UP] == -1 &&
+                   wifi_packet_rates[DOWN] == -1 &&
+                   wifi_packet_rates[UP] == -1);
+        } else {
+            struct timeval diff;
+            TIMEDIFF(last_wifi_observation, now, diff);
+            double dur = diff.tv_sec + ((double)diff.tv_usec / 1000000.0);
+            calc_rates(wifi_data_rates, wifi_last_bytes, bytes, dur);
+            calc_rates(wifi_packet_rates, wifi_last_packets, packets, dur);
+        }
+        last_wifi_observation = now;
+    }
+    infile.close();
+    
     return 0;
+}
+
+static pthread_mutex_t update_thread_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t update_thread_cv = PTHREAD_COND_INITIALIZER;
+static bool running = true;
+static void *
+NetworkStatsUpdateThread(void *)
+{
+    struct timespec interval = {1, 0};
+    struct timespec wait_time;
+    
+    PthreadScopedLock lock(&update_thread_lock);
+    while (running) {
+        update_wifi_estimated_rates();
+        
+        wait_time = abs_time(interval);
+        pthread_cond_timedwait(&update_thread_cv, &update_thread_lock, 
+                               &wait_time);
+    }
+    return NULL;
+}
+
+static void libpowertutor_init() __attribute__((constructor));
+static void libpowertutor_init()
+{
+    (void) NetworkStatsUpdateThread;
+    // TODO - IMPL
+}
+
+int
+wifi_uplink_data_rate()
+{
+    PthreadScopedLock lock(&wifi_state_lock);
+    return wifi_data_rates[UP];
 }
 
 int
 wifi_packet_rate()
 {
-    /* TODO - IMPL */
-    return 0;
+    PthreadScopedLock lock(&wifi_state_lock);
+    return wifi_packet_rates[DOWN] + wifi_packet_rates[UP];
 }
 
 static inline int 
 wifi_channel_rate_component()
 {
-    return (48 - 0.768 * wifi_channel_rate()) * wifi_data_rate();
+    return (48 - 0.768 * wifi_channel_rate()) * wifi_uplink_data_rate();
 }
 
 static int 
@@ -359,6 +469,8 @@ estimate_wifi_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
     } else {
         power = WIFI_LOW_POWER;
     }
+    
+    // TODO: finish
     
     return (((double)datalen) / bandwidth) * power;
 }

@@ -10,6 +10,8 @@ CPPUNIT_TEST_SUITE_REGISTRATION(NetworkStateTest);
 extern int get_mobile_queue_len(bool downlink);
 extern int wifi_channel_rate();
 extern int wifi_packet_rate();
+extern int wifi_uplink_data_rate();
+extern int update_wifi_estimated_rates();
 
 void 
 NetworkStateTest::setUp()
@@ -40,4 +42,21 @@ NetworkStateTest::testQueueSize()
     
     CPPUNIT_ASSERT_MESSAGE("Got uplink queue length", up >= 0);
     LOGD("Got uplink queue length: %d\n", up);
+}
+
+void 
+NetworkStateTest::testWifiParams()
+{
+    for (int i = -1; i < 5; ++i) {
+        int rc = update_wifi_estimated_rates();
+        CPPUNIT_ASSERT_MESSAGE("Updating wifi state succeeded", rc == 0);
+        if (i >= 0) {
+            int packet_rate = wifi_packet_rate();
+            int data_rate = wifi_uplink_data_rate();
+            CPPUNIT_ASSERT_MESSAGE("Got packet rate", packet_rate >= 0);
+            CPPUNIT_ASSERT_MESSAGE("Got uplink data rate", data_rate >= 0);
+            LOGD("Got packet rate %d data rate %d", packet_rate, data_rate);
+        }
+        sleep(1);
+    }
 }
