@@ -6,8 +6,8 @@
 
 class NetworkStateTest : public CppUnit::TestFixture {
     CPPUNIT_TEST_SUITE(NetworkStateTest);
-    //CPPUNIT_TEST(testChannelRate);
-    //CPPUNIT_TEST(testQueueSize);
+    CPPUNIT_TEST(testChannelRate);
+    CPPUNIT_TEST(testQueueSize);
     CPPUNIT_TEST_SUITE_END();    
 
   public:

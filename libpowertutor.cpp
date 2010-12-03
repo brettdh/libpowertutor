@@ -285,7 +285,8 @@ wifi_high_state(bool downlink, size_t datalen)
     return false;
 }
 
-//#include <wifi.h>
+
+#include "wifi.h"
 
 int
 wifi_channel_rate()
@@ -293,7 +294,7 @@ wifi_channel_rate()
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
-#if 1
+#if 0
     return 54;
 #else
     char reply[256];

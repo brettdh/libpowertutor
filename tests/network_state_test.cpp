@@ -25,7 +25,7 @@ void
 NetworkStateTest::testChannelRate()
 {
     int rate = wifi_channel_rate();
-    //CPPUNIT_ASSERT_MESSAGE("Got channel rate", rate >= 0);
+    CPPUNIT_ASSERT_MESSAGE("Got channel rate", rate >= 0);
     LOGD("Got channel rate: %dMbps\n", rate);
 }
 
