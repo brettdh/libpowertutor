@@ -15,6 +15,18 @@ LOCAL_MODULE := run_libpt_unit_tests
 LOCAL_SRC_FILES := $(TESTSUITE_SRCS) $(TEST_SRCS)
 LOCAL_C_INCLUDES := $(common_C_INCLUDES)
 LOCAL_CFLAGS := $(common_CFLAGS)
-LOCAL_STATIC_LIBRARIES := $(common_STATIC_LIBRARIES)
-LOCAL_SHARED_LIBRARIES := libpowertutor liblog
+
+# We need libpowertutor to be a static lib here because there's
+# apparently a bug in the CrystaX toolchain that causes a segfault when
+# exceptions are thrown between shared libs.  Or something like that.
+# It's weird, because the exception is being thrown only in the
+# testing executable.  But changing libpowertutor to a static lib
+# removes the segfault, so that's what I'm doing for now.
+# I think I'll build the shared lib too, though, for use on the device.
+# Otherwise, everything that links with libpowertutor also has to link
+# with libwpa_client to pull in the functions that are used for 
+# querying the link speed.
+LOCAL_STATIC_LIBRARIES := $(common_STATIC_LIBRARIES) libpowertutor
+LOCAL_SHARED_LIBRARIES := liblog libwpa_client
+
 include $(BUILD_EXECUTABLE)

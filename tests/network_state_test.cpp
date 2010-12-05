@@ -53,9 +53,9 @@ NetworkStateTest::testWifiParams()
         if (i >= 0) {
             int packet_rate = wifi_packet_rate();
             int data_rate = wifi_uplink_data_rate();
+            LOGD("Got packet rate %d data rate %d\n", packet_rate, data_rate);
             CPPUNIT_ASSERT_MESSAGE("Got packet rate", packet_rate >= 0);
             CPPUNIT_ASSERT_MESSAGE("Got uplink data rate", data_rate >= 0);
-            LOGD("Got packet rate %d data rate %d", packet_rate, data_rate);
         }
         sleep(1);
     }

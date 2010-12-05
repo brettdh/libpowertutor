@@ -342,6 +342,14 @@ static void calc_rates(int *wifi_rates, int *wifi_last, int *current,
     }
 }
 
+// caller must hold wifi_state_lock
+static void store_counts(int *wifi_last, int *current)
+{
+    for (int i = DOWN; i <= UP; ++i) {
+        wifi_last[i] = current[i];
+    }
+}
+
 int
 update_wifi_estimated_rates()
 {
@@ -402,6 +410,8 @@ update_wifi_estimated_rates()
             calc_rates(wifi_data_rates, wifi_last_bytes, bytes, dur);
             calc_rates(wifi_packet_rates, wifi_last_packets, packets, dur);
         }
+        store_counts(wifi_last_bytes, bytes);
+        store_counts(wifi_last_packets, packets);
         last_wifi_observation = now;
     }
     infile.close();
