@@ -275,16 +275,6 @@ estimate_mobile_energy_cost(bool downlink, int datalen, size_t bandwidth)
     return max(0, fach_energy) + max(0, dch_energy);
 }
 
-static inline bool
-wifi_high_state(bool downlink, size_t datalen)
-{
-    /* TODO - IMPL */
-    (void)downlink;
-    (void)datalen;
-    return false;
-}
-
-
 #include "wifi.h"
 
 int
@@ -293,9 +283,6 @@ wifi_channel_rate()
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
-#if 0
-    return 54;
-#else
     char reply[256];
     memset(reply, 0, sizeof(reply));
     int linkspeed = -1;
@@ -322,7 +309,6 @@ wifi_channel_rate()
     
     sscanf(reply, "%*s %u", &linkspeed);
     return linkspeed;
-#endif
 }
 
 pthread_mutex_t wifi_state_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -419,6 +405,8 @@ update_wifi_estimated_rates()
     return 0;
 }
 
+#ifdef BUILDING_SHLIB
+static pthread_t update_thread;
 static pthread_mutex_t update_thread_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t update_thread_cv = PTHREAD_COND_INITIALIZER;
 static bool running = true;
@@ -430,7 +418,10 @@ NetworkStatsUpdateThread(void *)
     
     PthreadScopedLock lock(&update_thread_lock);
     while (running) {
-        update_wifi_estimated_rates();
+        int rc = update_wifi_estimated_rates();
+        if (rc < 0) {
+            LOGE("Warning: failed to update network stats\n");
+        }
         
         wait_time = abs_time(interval);
         pthread_cond_timedwait(&update_thread_cv, &update_thread_lock, 
@@ -442,9 +433,26 @@ NetworkStatsUpdateThread(void *)
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
-    (void) NetworkStatsUpdateThread;
-    // TODO - IMPL
+    LOGD("In libpowertutor_init\n");
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    int rc = pthread_create(&update_thread, &attr, 
+                            NetworkStatsUpdateThread, NULL);
+    if (rc != 0) {
+        LOGE("Warning: failed to create update thread!\n");
+    }
 }
+
+static void libpowertutor_fin() __attribute__((destructor));
+static void libpowertutor_fin()
+{
+    LOGD("In libpowertutor_fin\n");
+    PthreadScopedLock lock(&update_thread_lock);
+    running = false;
+    pthread_cond_signal(&update_thread_cv);
+}
+#endif
 
 int
 wifi_uplink_data_rate()
@@ -464,6 +472,26 @@ static inline int
 wifi_channel_rate_component()
 {
     return (48 - 0.768 * wifi_channel_rate()) * wifi_uplink_data_rate();
+}
+
+static inline int
+wifi_mtu()
+{
+    // could get from ifreq ioctl, but it's 1500, so not bothering for now.
+    return 1500;
+}
+
+static inline bool
+wifi_high_state(size_t datalen)
+{
+    /* TODO - IMPL */
+    (void)downlink;
+    (void)datalen;
+    // TODO: pick up here.  estimate whether this transfer will push
+    // TODO:  the radio into the high-power state. (pkts = datalen/MTU)
+    // TODO: also, figure out if this estimation is accurate based 
+    // TODO:  only on data size and the MTU, or if I need to be more careful.
+    return false;
 }
 
 static int 
