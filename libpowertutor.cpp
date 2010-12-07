@@ -478,20 +478,25 @@ static inline int
 wifi_mtu()
 {
     // could get from ifreq ioctl, but it's 1500, so not bothering for now.
-    return 1500;
+    const int WIFI_DEV_MTU = 1500;
+    const int TCP_HDR_SIZE = 32;
+    const int IP_HDR_SIZE = 20;
+    return (WIFI_DEV_MTU - TCP_HDR_SIZE - IP_HDR_SIZE);
 }
 
 static inline bool
 wifi_high_state(size_t datalen)
 {
-    /* TODO - IMPL */
-    (void)downlink;
-    (void)datalen;
-    // TODO: pick up here.  estimate whether this transfer will push
-    // TODO:  the radio into the high-power state. (pkts = datalen/MTU)
-    // TODO: also, figure out if this estimation is accurate based 
+    // estimate whether this transfer will push the radio 
+    //  into the high-power state. (pkts = datalen/MTU)
+    // TODO: figure out if this estimation is accurate based 
     // TODO:  only on data size and the MTU, or if I need to be more careful.
-    return false;
+    // TODO:  my guess is that this will underestimate the number of packets
+    // TODO:  required for a transmission, because it doesn't include
+    // TODO:  e.g. TCP control messages.
+    int cur_packets = datalen / wifi_mtu();
+    cur_packets += (datalen % wifi_mtu()) ? 1 : 0; // round up
+    return (cur_packets + wifi_packet_rate()) > 15;
 }
 
 static int 
