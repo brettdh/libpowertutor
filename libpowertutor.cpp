@@ -114,35 +114,6 @@ get_mobile_state()
     return mobile_state;
 }
 
-static int 
-get_ip_addr(const char *ifname, struct in_addr *ip_addr)
-{
-    if (strlen(ifname) > IF_NAMESIZE) {
-        LOGE("Error: ifname too long (longer than %d)\n", IF_NAMESIZE);
-        return -1;
-    }
-
-    struct ifreq ifr;
-    strcpy(ifr.ifr_name, ifname);
-    ifr.ifr_addr.sa_family = AF_INET;
-
-    int sock = socket(PF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        LOGE("socket: %s\n", strerror(errno));
-        return sock;
-    }
-    int rc = ioctl(sock, SIOCGIFADDR, &ifr);
-    if (rc == 0) {
-        struct sockaddr_in *inaddr = (struct sockaddr_in*)&ifr.ifr_addr;
-        memcpy(ip_addr, &inaddr->sin_addr, sizeof(ip_addr));
-    } else {
-        LOGE("getting ip addr: ioctl: %s\n", strerror(errno));
-    }
-
-    close(sock);
-    return rc;
-}
-
 int
 get_mobile_queue_len(bool downlink)
 {
@@ -212,9 +183,29 @@ time_since_last_mobile_activity()
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
 
-static int 
-estimate_mobile_energy_cost(bool downlink, int datalen, size_t bandwidth)
+static bool
+power_model_is_remote()
 {
+    // XXX: HACKTASTIC.
+    // XXX:   The point of this is to decide whether I'm estimating
+    // XXX:   power usage based on local or remote information.
+    // XXX:   In the present world, I don't have any mobile-to-mobile
+    // XXX:   communication, so it's sufficient to ask whether I'm
+    // XXX:   on an Android device.
+    // XXX:   Later, I'll need to differentiate between minimizing
+    // XXX:   local vs. remote power consumption, but this is okay for now.
+#ifdef ANDROID
+    return false;
+#else
+    return true;
+#endif
+}
+
+static int 
+estimate_mobile_energy_cost(int datalen, size_t bandwidth)
+{
+    bool downlink = power_model_is_remote();
+    
     MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
@@ -495,19 +486,19 @@ wifi_high_state(size_t datalen)
     // TODO:  required for a transmission, because it doesn't include
     // TODO:  e.g. TCP control messages.
     int cur_packets = datalen / wifi_mtu();
-    cur_packets += (datalen % wifi_mtu()) ? 1 : 0; // round up
+    cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
     return (cur_packets + wifi_packet_rate()) > 15;
 }
 
 static int 
-estimate_wifi_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
+estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 {
     int power = 0;
     
     // The wifi radio is only in the transmit state for a very short time,
     //  and that power consumption is factored into the high/low states'
     //  power calculation.
-    if (wifi_high_state(downlink, datalen)) {
+    if (wifi_high_state(datalen)) {
         power = WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
     } else {
         power = WIFI_LOW_POWER;
@@ -526,13 +517,13 @@ estimate_wifi_energy_cost(bool downlink, size_t datalen, size_t bandwidth)
 // XXX:  during which it makes sense to keep sending to amortize the
 // XXX:  "tail energy" over several transmissions.  Something like that.
 
-int estimate_energy_cost(NetworkType type, bool downlink, 
+int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth)
 {
     if (type == TYPE_MOBILE) {
-        return estimate_mobile_energy_cost(downlink, datalen, bandwidth);
+        return estimate_mobile_energy_cost(datalen, bandwidth);
     } else if (type == TYPE_WIFI) {
-        return estimate_wifi_energy_cost(downlink, datalen, bandwidth);
+        return estimate_wifi_energy_cost(datalen, bandwidth);
     } else assert(false);
     
     return -1;

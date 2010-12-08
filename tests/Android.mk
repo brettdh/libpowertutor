@@ -5,7 +5,7 @@ common_C_INCLUDES := external/bdh_apps/cppunit/include \
 #                    external/openssl/include
 common_CFLAGS:=-g -O0 -Wall -Werror
 common_STATIC_LIBRARIES:=libcppunit #libboost_thread
-TESTSUITE_SRCS := run_all_tests.cpp test_common.cpp #StdioOutputter.cpp
+TESTSUITE_SRCS := run_all_tests.cpp test_common.cpp
 
 # unit tests
 include $(CLEAR_VARS)
@@ -29,4 +29,12 @@ LOCAL_CFLAGS := $(common_CFLAGS)
 LOCAL_STATIC_LIBRARIES := $(common_STATIC_LIBRARIES) libpowertutor
 LOCAL_SHARED_LIBRARIES := liblog libwpa_client
 
+include $(BUILD_EXECUTABLE)
+
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := test_sending_estimation
+LOCAL_SRC_FILES := test_sending_estimation.cpp ../utils.cpp
+LOCAL_CFLAGS := $(common_CFLAGS)
+LOCAL_SHARED_LIBRARIES := liblog libpowertutor
 include $(BUILD_EXECUTABLE)
