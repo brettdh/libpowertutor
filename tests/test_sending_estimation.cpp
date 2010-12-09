@@ -11,6 +11,9 @@ do_and_print_result(NetworkType type, size_t datalen, size_t bandwidth)
     int energy = estimate_energy_cost(type, datalen, bandwidth);
     LOGD("[%lu.%06lu] %s: %zu bytes, %zu bytes/sec, %d mJ\n",
          net_types[type], datalen, bandwidth, energy);
+    
+    // TODO: actually send the data on the right interface'
+    // TODO:  so that PowerTutor can observe the energy consumption
 }
 
 static int
@@ -36,6 +39,8 @@ int main()
         socks[TYPE_WIFI] = connect_sock(&wifi_addr);
     }
     
+    // TODO: get the bandwidth estimates from the scout via IPC.
+    //  Maybe separate that bit off from libcmm into a separate library.
     do_and_print_result(TYPE_MOBILE, 25, 8192);
     sleep(1);
     do_and_print_result(TYPE_MOBILE, 50, 8192);
