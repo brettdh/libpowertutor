@@ -21,6 +21,7 @@
 
 #include "libpowertutor.h"
 #include "timeops.h"
+#include "utils.h"
 
 #define LOG_TAG "libpowertutor"
 #include <cutils/log.h>

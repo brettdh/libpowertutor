@@ -3,12 +3,17 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <net/if.h>
 #include "utils.h"
+#include <errno.h>
+#include <cutils/log.h>
 
 int 
 get_ip_addr(const char *ifname, struct in_addr *ip_addr)
 {
+    memset(ip_addr, 0, sizeof(struct in_addr));
     if (strlen(ifname) > IF_NAMESIZE) {
         LOGE("Error: ifname too long (longer than %d)\n", IF_NAMESIZE);
         return -1;

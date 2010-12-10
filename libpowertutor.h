@@ -15,6 +15,7 @@ enum NetworkType {
 // XXX:  Therefore, it's okay to err on the side of exposing too much detail,
 // XXX:  since I might need a lot of detail to make good decisions,
 // XXX:  and a simple abstraction might not be powerful enough.
+extern "C"
 int estimate_energy_cost(NetworkType type, size_t datalen, size_t bandwidth);
 
 #endif /* end of include guard: LIBPOWERTUTOR_H_NYF9WXHP */
