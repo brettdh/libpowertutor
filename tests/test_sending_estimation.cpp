@@ -58,19 +58,27 @@ do_and_print_result(NetworkType type, size_t datalen)
     struct timeval now;
     gettimeofday(&now, NULL);
     int energy = estimate_energy_cost(type, datalen, bandwidth_up[type]);
-    LOGD("[%lu.%06lu] %s: %zu bytes, %zu bytes/sec, %d mJ\n",
+    LOGD("%lu.%06lu  %s: %zu bytes, %zu bytes/sec, %d mJ\n",
          now.tv_sec, now.tv_usec,
          net_types[type], datalen, bandwidth_up[type], energy);
-    fprintf(out, "[%lu.%06lu] %s: %zu bytes, %zu bytes/sec, %d mJ\n",
+    fprintf(out, "%lu.%06lu  %s: %zu bytes, %zu bytes/sec, %d mJ\n",
             now.tv_sec, now.tv_usec,
             net_types[type], datalen, bandwidth_up[type], energy);
 
     // actually send the data on the right interface'
     //  so that PowerTutor can observe the energy consumption
     ssize_t rc = send_bytes(socks[type], datalen);
+    gettimeofday(&now, NULL);
     if (rc != (ssize_t) datalen) {
         LOGE("Failed to send %zu bytes (%s)\n", 
              datalen, strerror(errno));
+        fprintf(out, "Failed to send %zu bytes (%s)\n", 
+                datalen, strerror(errno));
+    } else {
+        LOGD("%lu.%06lu  %s: done\n",
+             now.tv_sec, now.tv_usec, net_types[type]);
+        fprintf(out, "%lu.%06lu  %s: done\n",
+                now.tv_sec, now.tv_usec, net_types[type]);
     }
 }
 
@@ -85,12 +93,21 @@ connect_sock(struct sockaddr *local_addr)
         LOGE("Failed to create socket (%s)\n", strerror(errno));
         return -1;
     }
-    int on = 1;
+    int val = 1;
     int rc = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-                        (char *) &on, sizeof(on));
+                        (char *) &val, sizeof(val));
     if (rc < 0) {
         LOGE("Cannot set SO_REUSEADDR (%s)\n", strerror(errno));
     }
+    
+    val = 0;
+    rc = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char *)&val, sizeof(val));
+    if (rc < 0) {
+        LOGE("Cannot set zero socket buffer (%s)\n", strerror(errno));
+        close(sock);
+        return -1;
+    }
+    
     socklen_t socklen = sizeof(struct sockaddr_in);
     rc = bind(sock, local_addr, socklen);
     if (rc < 0) {
