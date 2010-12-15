@@ -35,9 +35,15 @@ static FILE *out = NULL;
 static ssize_t
 send_bytes(int sock, size_t datalen)
 {
+    //const size_t CHUNKSIZE = 4096;
     const size_t CHUNKSIZE = 4096;
-    char data[CHUNKSIZE];
-    memset(data, 'F', CHUNKSIZE);
+    //char data[CHUNKSIZE];
+    static char *data = new char[CHUNKSIZE];
+    static bool init = false;
+    if (!init) {
+        memset(data, 'F', CHUNKSIZE);
+        init = true;
+    }
     
     size_t bytes_sent = 0;
     while (bytes_sent < datalen) {
@@ -58,10 +64,10 @@ do_and_print_result(NetworkType type, size_t datalen)
     struct timeval now;
     gettimeofday(&now, NULL);
     int energy = estimate_energy_cost(type, datalen, bandwidth_up[type]);
-    LOGD("%lu.%06lu  %s: %zu bytes, %zu bytes/sec, %d mJ\n",
+    LOGD("%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
          now.tv_sec, now.tv_usec,
          net_types[type], datalen, bandwidth_up[type], energy);
-    fprintf(out, "%lu.%06lu  %s: %zu bytes, %zu bytes/sec, %d mJ\n",
+    fprintf(out, "%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
             now.tv_sec, now.tv_usec,
             net_types[type], datalen, bandwidth_up[type], energy);
 
@@ -70,14 +76,14 @@ do_and_print_result(NetworkType type, size_t datalen)
     ssize_t rc = send_bytes(socks[type], datalen);
     gettimeofday(&now, NULL);
     if (rc != (ssize_t) datalen) {
-        LOGE("Failed to send %zu bytes (%s)\n", 
-             datalen, strerror(errno));
-        fprintf(out, "Failed to send %zu bytes (%s)\n", 
-                datalen, strerror(errno));
+        LOGE("%lu.%06lu  Failed to send %zu bytes (%s)\n", 
+             now.tv_sec, now.tv_usec, datalen, strerror(errno));
+        fprintf(out, "%lu.%06lu  Failed to send %zu bytes (%s)\n", 
+                now.tv_sec, now.tv_usec, datalen, strerror(errno));
     } else {
-        LOGD("%lu.%06lu  %s: done\n",
+        LOGD("%lu.%06lu  %s done\n",
              now.tv_sec, now.tv_usec, net_types[type]);
-        fprintf(out, "%lu.%06lu  %s: done\n",
+        fprintf(out, "%lu.%06lu  %s done\n",
                 now.tv_sec, now.tv_usec, net_types[type]);
     }
 }
@@ -205,6 +211,10 @@ int main()
     do_and_print_result(TYPE_WIFI, 350);
     sleep(2);
     do_and_print_result(TYPE_WIFI, 1000);
+    sleep(1);
+    do_and_print_result(TYPE_WIFI, 10000);
+    sleep(1);
+    do_and_print_result(TYPE_WIFI, 100000);
     sleep(1);
     do_and_print_result(TYPE_WIFI, 1000000);
     

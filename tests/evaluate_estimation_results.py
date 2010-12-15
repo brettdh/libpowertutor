@@ -13,7 +13,7 @@ def get_most_recent_of(glob):
     
     # return the item with the greatest timestamp
     items.sort()
-    print "Choosing among ", items
+    # print "Choosing among ", items
     return items[-1]
     
 class PowerTrace:
@@ -25,7 +25,7 @@ class PowerTrace:
                 self.__trace_start = int(line.split()[1])
                 self.__trace_offset = self.__trace_start % 1000
             elif line[0:5] == "begin":
-                if cur_slice:
+                if cur_slice != None:
                     self.__trace.append(cur_slice)
                 cur_slice = {}
                 step = int(line.split()[1])
@@ -33,7 +33,7 @@ class PowerTrace:
                     raise Exception("expected slice %d, got slice %d" % 
                                     (len(self.__trace), step))
             else:
-                if cur_slice:
+                if cur_slice != None:
                     fields = line.split()
                     cur_slice[fields[0]] = fields[1:]
                     
@@ -51,8 +51,8 @@ class PowerTrace:
 
                 # timestamps are floating-point seconds; store as milliseconds
                 timestamp = int(float(fields[0]) * 1000)
-                if timestamp < self.__trace_start or
-                   timestamp > self.__trace_end:
+                if (timestamp < self.__trace_start or
+                    timestamp > self.__trace_end):
                     raise Exception("Error: libpt_log falls outside " + 
                                     "of power trace")
         except Exception, e:
@@ -61,18 +61,32 @@ class PowerTrace:
         finally:
             print "Trace ends at %d" % self.__trace_end
             
+    TYPE_WIFI = "wifi"
+    TYPE_MOBILE = "mobile"
+    
     def calculate_energy(self, begin, end, type):
         '''Calculate the energy used for this transfer, which
            began at <begin> and ended at <end>.
            begin and end are UNIX timestamps in milliseconds.
            Returns energy in mJ.'''
-        if type != PowerTrace.TYPE_WIFI and type != PowerTrace.TYPE_MOBILE:
+        if type != PowerTrace.TYPE_WIFI: #TODO: and type != TYPE_MOBILE:
             raise Exception("Unknown transfer type: %s" % type)
         
-        begin_step = (begin - trace_start) / 1000
-        end_step = (end - trace_start) / 1000
-        # TODO: take a fresh look at this and figure out how to calculate it.
-        # TODO:   focus on wifi only to start.
+        begin_step = (begin - self.__trace_start) / 1000
+        end_step = (end - self.__trace_start) / 1000
+        
+        energy = 0
+        if type == PowerTrace.TYPE_WIFI:
+            # if begin_step == end_step:
+            #     return (end - begin) * self.__trace[begin_step]["Wifi"]
+            # else:
+            for i in xrange(begin_step, end_step + 1):
+                energy += int(self.__trace[i]["Wifi"][0])
+        else:
+            # TODO
+            assert False
+            
+        return energy
 
 def main():
     tmpdir = '/tmp/powertutor_eval'
@@ -97,23 +111,25 @@ def main():
     
     action_pending = False
     begin = None
+    action_line = None
     for line in libpt_log_lines:
         fields = line.split()
         timestamp = int(float(fields[0]) * 1000) # milliseconds
         if action_pending:
             end = timestamp
             duration = end - begin
-            
-            energy = trace.calculate_energy(begin, end)
-            print ""
+            action_type = fields[1]
+            energy = trace.calculate_energy(begin, end, action_type)
+            print "%s ; PowerTutor says %d mJ" % (action_line.strip(), energy)
             
             begin = None
             end = None
             action_pending = False
+            action_line = None
         else:
             begin = timestamp
             action_pending = True
-            
+            action_line = line
 
 if __name__ == '__main__':
     main()
