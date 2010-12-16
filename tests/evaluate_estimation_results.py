@@ -80,10 +80,15 @@ class PowerTrace:
             # if begin_step == end_step:
             #     return (end - begin) * self.__trace[begin_step]["Wifi"]
             # else:
+            # TODO: tune this a bit more; make sure it's not overestimating.
             for i in xrange(begin_step, end_step + 1):
                 energy += int(self.__trace[i]["Wifi"][0])
         else:
-            # TODO
+            # TODO: this should be done by adding up the total 3G usage
+            # TODO:  over the entire trace and then comparing this to
+            # TODO:  the total estimated usage
+            # TODO: This approach simplifies the consideration of 
+            # TODO:  any amortization of ramp and tail periods.
             assert False
             
         return energy
