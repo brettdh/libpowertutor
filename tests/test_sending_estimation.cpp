@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <vector>
 #include <functional>
+#include "timeops.h"
 using std::vector; using std::min;
 
 #define LOG_TAG "test_sending_estimation"
@@ -91,6 +92,7 @@ do_and_print_result(NetworkType type, size_t datalen)
 static int
 connect_sock(struct sockaddr *local_addr)
 {
+    struct sockaddr_in *local_inaddr = (struct sockaddr_in *) local_addr;
     const char *host = "141.212.110.132";
     const short port = 4242;
     
@@ -117,7 +119,6 @@ connect_sock(struct sockaddr *local_addr)
     socklen_t socklen = sizeof(struct sockaddr_in);
     rc = bind(sock, local_addr, socklen);
     if (rc < 0) {
-        struct sockaddr_in *local_inaddr = (struct sockaddr_in *) local_addr;
         LOGE("Failed to bind socket to %s (%s)\n", 
              inet_ntoa(local_inaddr->sin_addr), strerror(errno));
         close(sock);
@@ -130,7 +131,13 @@ connect_sock(struct sockaddr *local_addr)
     inet_aton(host, &remote_addr.sin_addr);
     remote_addr.sin_port = htons(port);
     socklen = sizeof(remote_addr);
+    struct timeval begin, end, diff;
+    gettimeofday(&begin, NULL);
     rc = connect(sock, (struct sockaddr *) &remote_addr, socklen);
+    gettimeofday(&end, NULL);
+    TIMEDIFF(begin, end, diff);
+    LOGD("connect() from %s returned after %lu.%06lu seconds\n",
+         inet_ntoa(local_inaddr->sin_addr), diff.tv_sec, diff.tv_usec);
     if (rc < 0) {
         LOGE("Failed to connect to %s:%d (%s)\n", host, port, strerror(errno));
         close(sock);
@@ -200,6 +207,40 @@ int main()
         }
     }
     
+    LOGD("Waiting a bit for FACH timeout\n");
+    sleep(8);
+    
+    gettimeofday(&now, NULL);
+    LOGD("%lu.%06lu Starting 3G power tests\n", now.tv_sec, now.tv_usec);
+    fprintf(out, "%lu.%06lu Starting 3G power tests\n",
+            now.tv_sec, now.tv_usec);
+    do_and_print_result(TYPE_MOBILE, 5); // still FACH
+    sleep(4);
+    do_and_print_result(TYPE_MOBILE, 5); // still FACH
+    sleep(4);
+    
+    do_and_print_result(TYPE_MOBILE, 30); // still FACH
+    sleep(1);
+    do_and_print_result(TYPE_MOBILE, 30); // still FACH
+    sleep(1);
+    do_and_print_result(TYPE_MOBILE, 30); // DCH now
+    do_and_print_result(TYPE_MOBILE, 30);
+    sleep(5);
+    do_and_print_result(TYPE_MOBILE, 30); // FACH now
+    sleep(1);
+    do_and_print_result(TYPE_MOBILE, 150); // DCH now
+    sleep(11); // IDLE again
+    
+    // test DCH timeout plus time to send bytes.
+    do_and_print_result(TYPE_MOBILE, 40000); // DCH now
+    LOGD("Done with 3G estimations; waiting 12 seconds for IDLE\n");
+    sleep(12); // hopefully IDLE again
+    gettimeofday(&now, NULL);
+    LOGD("%lu.%06lu Finished 3G power tests\n", now.tv_sec, now.tv_usec);
+    fprintf(out, "%lu.%06lu Finished 3G power tests\n",
+            now.tv_sec, now.tv_usec);
+    
+    LOGD("Starting wifi power tests\n");
     do_and_print_result(TYPE_WIFI, 25);
     sleep(1);
     do_and_print_result(TYPE_WIFI, 50);

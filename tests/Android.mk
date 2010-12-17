@@ -34,7 +34,7 @@ include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := test_sending_estimation
-LOCAL_SRC_FILES := test_sending_estimation.cpp ../utils.cpp \
+LOCAL_SRC_FILES := test_sending_estimation.cpp ../utils.cpp ../timeops.cpp \
 	$(addprefix ../../libcmm/, libcmm_external_ipc.cpp debug.cpp)
 LOCAL_CFLAGS := $(common_CFLAGS)
 LOCAL_C_INCLUDES := $(common_C_INCLUDES)

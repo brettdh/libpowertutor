@@ -106,7 +106,8 @@ static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
 
 pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
-static struct timeval last_mobile_activity;
+static struct timeval last_mobile_activity = {0, 0};
+static int mobile_last_bytes[2] = {-1, -1};
 
 static inline MobileState
 get_mobile_state()
@@ -116,7 +117,7 @@ get_mobile_state()
 }
 
 int
-get_mobile_queue_len(bool downlink)
+get_mobile_queue_len(int *down_queue, int *up_queue)
 {
     const char *iface = "rmnet0";
     struct in_addr mobile_addr;
@@ -169,16 +170,25 @@ get_mobile_queue_len(bool downlink)
         infile.close();
     }
     
-    return downlink ? down_bytes : up_bytes;
+    if (down_queue) {
+        *down_queue = down_bytes;
+    }
+    if (up_queue) {
+        *up_queue = up_bytes;
+    }
+    return 0;
 }
 
 static inline double
-time_since_last_mobile_activity()
+time_since_last_mobile_activity(bool already_locked=false)
 {
     struct timeval dur, now;
     TIME(now);
     {
-        PthreadScopedLock lock(&mobile_state_lock);
+        PthreadScopedLock lock;
+        if (!already_locked) { 
+            lock.acquire(&mobile_state_lock);
+        }
         TIMEDIFF(last_mobile_activity, now, dur);
     }
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
@@ -210,7 +220,11 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
-    int queue_len = get_mobile_queue_len(downlink);
+    int queue_len = 0;
+    int rc = get_mobile_queue_len(&queue_len, NULL);
+    if (rc < 0) {
+        return rc;
+    }
     int threshold = get_dch_threshold(downlink);
     if (old_state == MOBILE_POWER_STATE_DCH ||
         (queue_len + datalen) >= threshold) {
@@ -309,7 +323,7 @@ static int wifi_last_bytes[2] = {-1, -1};
 static int wifi_last_packets[2] = {-1, -1};
 static int wifi_data_rates[2] = {-1, -1};
 static int wifi_packet_rates[2] = {-1, -1};
-struct timeval last_wifi_observation = {0, 0};
+static struct timeval last_wifi_observation = {0, 0};
 
 // caller must hold wifi_state_lock
 static void calc_rates(int *wifi_rates, int *wifi_last, int *current,
@@ -329,14 +343,11 @@ static void store_counts(int *wifi_last, int *current)
 }
 
 int
-update_wifi_estimated_rates()
+get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
 {
-    const char *iface = "tiwlan0";
     size_t iface_len = strlen(iface);
     
     char filename[] = "/proc/net/dev";
-    
-    struct timeval now;
     
     ifstream infile(filename);
     string junk, line;
@@ -345,6 +356,7 @@ update_wifi_estimated_rates()
     getline(infile, junk);
     getline(infile, junk);
     
+    int rc = -1;
     while (getline(infile, line)) {
         //  Receive                      ...        Transmit
         //  0      1          2                       9        10
@@ -354,46 +366,105 @@ update_wifi_estimated_rates()
         in >> cur_iface;
         if (!in) {
             LOGE("Failed to parse ip addr\n");
-            return -1;
+            break;
         }
-        if (cur_iface.compare(0, iface_len, iface) != 0) {
-            continue;
+        if (cur_iface.compare(0, iface_len, iface) == 0) {
+            in >> bytes[DOWN] >> packets[DOWN];
+            in >> junk >> junk >> junk
+               >> junk >> junk >> junk;
+            in >> bytes[UP] >> packets[UP];
+            if (!in) {
+                LOGE("Failed to parse byte/packet counts\n");
+            } else {
+                rc = 0;
+            }
+            break;
         }
-        
-        int bytes[2] = {0,0}, packets[2] = {0,0};
-        in >> bytes[DOWN] >> packets[DOWN];
-        in >> junk >> junk >> junk
-           >> junk >> junk >> junk;
-        in >> bytes[UP] >> packets[UP];
-        if (!in) {
-            LOGE("Failed to parse byte/packet counts\n");
-            return -1;
-        }
-        //getline(in, junk);
-
-        TIME(now);
-        PthreadScopedLock lock(&wifi_state_lock);
-        if (wifi_last_bytes[DOWN] == -1) {
-            assert(wifi_last_bytes[UP] == -1 &&
-                   wifi_last_packets[DOWN] == -1 &&
-                   wifi_last_packets[UP] == -1 &&
-                   wifi_data_rates[DOWN] == -1 &&
-                   wifi_data_rates[UP] == -1 &&
-                   wifi_packet_rates[DOWN] == -1 &&
-                   wifi_packet_rates[UP] == -1);
-        } else {
-            struct timeval diff;
-            TIMEDIFF(last_wifi_observation, now, diff);
-            double dur = diff.tv_sec + ((double)diff.tv_usec / 1000000.0);
-            calc_rates(wifi_data_rates, wifi_last_bytes, bytes, dur);
-            calc_rates(wifi_packet_rates, wifi_last_packets, packets, dur);
-        }
-        store_counts(wifi_last_bytes, bytes);
-        store_counts(wifi_last_packets, packets);
-        last_wifi_observation = now;
     }
     infile.close();
+    return rc;
+}
+
+int
+update_wifi_estimated_rates()
+{
+    struct timeval now;
+    int bytes[2] = {0,0}, packets[2] = {0,0};
+    int rc = get_net_dev_stats("tiwlan0", bytes, packets);
+    if (rc < 0) {
+        return rc;
+    }
+
+    TIME(now);
+    PthreadScopedLock lock(&wifi_state_lock);
+    if (wifi_last_bytes[DOWN] == -1) {
+        assert(wifi_last_bytes[UP] == -1 &&
+               wifi_last_packets[DOWN] == -1 &&
+               wifi_last_packets[UP] == -1 &&
+               wifi_data_rates[DOWN] == -1 &&
+               wifi_data_rates[UP] == -1 &&
+               wifi_packet_rates[DOWN] == -1 &&
+               wifi_packet_rates[UP] == -1);
+    } else {
+        struct timeval diff;
+        TIMEDIFF(last_wifi_observation, now, diff);
+        double dur = diff.tv_sec + ((double)diff.tv_usec / 1000000.0);
+        calc_rates(wifi_data_rates, wifi_last_bytes, bytes, dur);
+        calc_rates(wifi_packet_rates, wifi_last_packets, packets, dur);
+    }
+    store_counts(wifi_last_bytes, bytes);
+    store_counts(wifi_last_packets, packets);
+    last_wifi_observation = now;
     
+    return 0;
+}
+
+int
+update_mobile_state()
+{
+    int bytes[2] = {0,0}, dummy[2] = {0,0};
+    int rc = get_net_dev_stats("rmnet0", bytes, dummy);
+    if (rc < 0) {
+        return rc;
+    }
+    int down_queue = 0, up_queue = 0;
+    rc = get_mobile_queue_len(&down_queue, &up_queue);
+    if (rc < 0) {
+        return rc;
+    }
+    
+    PthreadScopedLock lock(&mobile_state_lock);
+    if (bytes[DOWN] > mobile_last_bytes[DOWN] ||
+        bytes[UP] > mobile_last_bytes[UP]) {
+        // there's been activity recently,
+        //  and the power state might have changed
+        if (mobile_last_bytes[DOWN] != -1) {
+            gettimeofday(&last_mobile_activity, NULL);
+            // Make sure we have at least one prior observation
+            if (mobile_state == MOBILE_POWER_STATE_IDLE) {
+                mobile_state = MOBILE_POWER_STATE_FACH;
+            }
+            if (down_queue > MOBILE_DCH_THRESHOLD_DOWN ||
+                up_queue > MOBILE_DCH_THRESHOLD_UP) {
+                mobile_state = MOBILE_POWER_STATE_DCH;
+            }
+        }
+        mobile_last_bytes[DOWN] = bytes[DOWN];
+        mobile_last_bytes[UP] = bytes[UP];
+    } else {
+        // idle for the past second
+        // check to see if a timeout expired
+        double idle_time = time_since_last_mobile_activity(true);
+        if (mobile_state == MOBILE_POWER_STATE_DCH) {
+            if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
+                mobile_state = MOBILE_POWER_STATE_FACH;
+            }
+        } else if (mobile_state == MOBILE_POWER_STATE_FACH) {
+            if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
+                mobile_state = MOBILE_POWER_STATE_IDLE;
+            }
+        }
+    }
     return 0;
 }
 
@@ -412,7 +483,11 @@ NetworkStatsUpdateThread(void *)
     while (running) {
         int rc = update_wifi_estimated_rates();
         if (rc < 0) {
-            LOGE("Warning: failed to update network stats\n");
+            LOGE("Warning: failed to update wifi stats\n");
+        }
+        rc = update_mobile_state();
+        if (rc < 0) {
+            LOGE("Warning: failed to update mobile state\n");
         }
         
         wait_time = abs_time(interval);
@@ -463,7 +538,13 @@ wifi_packet_rate()
 static inline int 
 wifi_channel_rate_component()
 {
-    return (48 - 0.768 * wifi_channel_rate()) * wifi_uplink_data_rate();
+    // These are both in Mbps.
+    int channel_rate = wifi_channel_rate();
+    double uplink_data_rate = int(wifi_uplink_data_rate() * 8.0 / 1000000.0);
+    int channel_rate_component = (48 - 0.768 * channel_rate)*uplink_data_rate;
+    LOGD("channel rate %d uplink data rate %f chrate component %d\n",
+         channel_rate, uplink_data_rate, channel_rate_component);
+    return channel_rate_component;
 }
 
 static inline int
@@ -488,7 +569,9 @@ wifi_high_state(size_t datalen)
     // TODO:  e.g. TCP control messages.
     int cur_packets = datalen / wifi_mtu();
     cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
-    return (cur_packets + wifi_packet_rate()) > 15;
+    int packet_rate = wifi_packet_rate();
+    LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
+    return (cur_packets + packet_rate) > 15;
 }
 
 static int 

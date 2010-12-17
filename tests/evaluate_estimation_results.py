@@ -29,6 +29,7 @@ class PowerTrace:
                     self.__trace.append(cur_slice)
                 cur_slice = {}
                 step = int(line.split()[1])
+                cur_slice["begin"] = step
                 if step != len(self.__trace):
                     raise Exception("expected slice %d, got slice %d" % 
                                     (len(self.__trace), step))
@@ -92,6 +93,22 @@ class PowerTrace:
             assert False
             
         return energy
+    
+    def total_mobile_energy(self, begin, end):
+        # begin and end are milliseconds.
+        print "Considering trace section [%d, %d]" % (begin, end)
+        mobile_energy = 0
+        for cur_slice in self.__trace:
+            if "3G-state" in cur_slice and cur_slice["3G-state"][0] != "IDLE":
+                timestamp = (self.__trace_start / 1000) + cur_slice["begin"]
+                timestamp_ms = timestamp * 1000
+                if timestamp_ms < begin or timestamp_ms > end:
+                    continue
+                    
+                print ("3G in %s state at step %d" % 
+                       (cur_slice["3G-state"], timestamp))
+                mobile_energy += int(cur_slice["3G"][0])
+        return mobile_energy
 
 def main():
     tmpdir = '/tmp/powertutor_eval'
@@ -117,15 +134,32 @@ def main():
     action_pending = False
     begin = None
     action_line = None
+    mobile_energy = 0
+    first_mobile = None
+    last_mobile = None
     for line in libpt_log_lines:
         fields = line.split()
         timestamp = int(float(fields[0]) * 1000) # milliseconds
+        
+        if "Starting 3G power tests" in line:
+            first_mobile = timestamp
+            continue
+        elif "Finished 3G power tests" in line:
+            last_mobile = timestamp
+            continue
+        
         if action_pending:
             end = timestamp
             duration = end - begin
             action_type = fields[1]
-            energy = trace.calculate_energy(begin, end, action_type)
-            print "%s ; PowerTutor says %d mJ" % (action_line.strip(), energy)
+            if action_type == PowerTrace.TYPE_WIFI:
+                energy = trace.calculate_energy(begin, end, action_type)
+                print ("%s ; PowerTutor says %d mJ" % 
+                       (action_line.strip(), energy))
+            else:
+                mobile_energy += int(action_line.split()[6])
+                print ("%s ; total estimated %d mJ" % 
+                       (action_line.strip(), mobile_energy))
             
             begin = None
             end = None
@@ -135,6 +169,11 @@ def main():
             begin = timestamp
             action_pending = True
             action_line = line
+    
+    if first_mobile != None:
+        pt_total_mobile = trace.total_mobile_energy(first_mobile, last_mobile)
+        print ("Total estimated mobile energy: %d mJ (PowerTutor: %d mJ)" %
+               (mobile_energy, pt_total_mobile))
 
 if __name__ == '__main__':
     main()
