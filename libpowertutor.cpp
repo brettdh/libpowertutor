@@ -219,6 +219,14 @@ power_model_is_remote()
 static int 
 estimate_mobile_energy_cost(int datalen, size_t bandwidth)
 {
+    // XXX: this doesn't account for the impact that the large
+    // XXX:  RTT of the 3G connection will have on the time it takes
+    // XXX:  to stop sending all the TCP ACKs.
+    // XXX: a higher-level problem is that in order to make this guess
+    // XXX:  accurate, I have to accurately guess what TCP is going to do
+    // XXX:  with the data.
+    // TODO: make it better.
+    
     bool downlink = power_model_is_remote();
     
     MobileState old_state = get_mobile_state();
