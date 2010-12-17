@@ -45,6 +45,10 @@ enum MobileState {
     MOBILE_POWER_STATE_DCH
 };
 
+static const char *mobile_state_str[3] = {
+    "IDLE", "FACH", "DCH"
+};
+
 // XXX: These are for 3G only; careful when testing!
 static const int MOBILE_IDLE_POWER = 10;
 static const int MOBILE_FACH_POWER = 401;
@@ -433,6 +437,8 @@ update_mobile_state()
         return rc;
     }
     
+    bool state_change = false;
+    
     PthreadScopedLock lock(&mobile_state_lock);
     if (bytes[DOWN] > mobile_last_bytes[DOWN] ||
         bytes[UP] > mobile_last_bytes[UP]) {
@@ -442,10 +448,14 @@ update_mobile_state()
             gettimeofday(&last_mobile_activity, NULL);
             // Make sure we have at least one prior observation
             if (mobile_state == MOBILE_POWER_STATE_IDLE) {
+                state_change = true;
                 mobile_state = MOBILE_POWER_STATE_FACH;
             }
             if (down_queue > MOBILE_DCH_THRESHOLD_DOWN ||
                 up_queue > MOBILE_DCH_THRESHOLD_UP) {
+                if (mobile_state != MOBILE_POWER_STATE_DCH) {
+                    state_change = true;
+                }
                 mobile_state = MOBILE_POWER_STATE_DCH;
             }
         }
@@ -457,13 +467,24 @@ update_mobile_state()
         double idle_time = time_since_last_mobile_activity(true);
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
             if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
+                state_change = true;
                 mobile_state = MOBILE_POWER_STATE_FACH;
+                
+                // mark this state change as an "activity,"
+                //   so that we wait for the full FACH timeout
+                //   before going to IDLE.
+                gettimeofday(&last_mobile_activity, NULL);
             }
         } else if (mobile_state == MOBILE_POWER_STATE_FACH) {
             if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
+                state_change = true;
                 mobile_state = MOBILE_POWER_STATE_IDLE;
             }
         }
+    }
+    if (state_change) {
+        LOGD("mobile state changed to %s\n", 
+             mobile_state_str[mobile_state]);
     }
     return 0;
 }

@@ -225,11 +225,11 @@ int main()
     sleep(1);
     do_and_print_result(TYPE_MOBILE, 30); // DCH now
     do_and_print_result(TYPE_MOBILE, 30);
-    sleep(5);
+    sleep(6);
     do_and_print_result(TYPE_MOBILE, 30); // FACH now
     sleep(1);
     do_and_print_result(TYPE_MOBILE, 150); // DCH now
-    sleep(11); // IDLE again
+    sleep(12); // IDLE again
     
     // test DCH timeout plus time to send bytes.
     do_and_print_result(TYPE_MOBILE, 40000); // DCH now

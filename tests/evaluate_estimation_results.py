@@ -137,6 +137,7 @@ def main():
     mobile_energy = 0
     first_mobile = None
     last_mobile = None
+    big_mobile_send = None
     for line in libpt_log_lines:
         fields = line.split()
         timestamp = int(float(fields[0]) * 1000) # milliseconds
@@ -157,7 +158,12 @@ def main():
                 print ("%s ; PowerTutor says %d mJ" % 
                        (action_line.strip(), energy))
             else:
-                mobile_energy += int(action_line.split()[6])
+                bytes = int(action_line.split()[2])
+                energy = int(action_line.split()[6])
+                mobile_energy += energy
+                if bytes == 40000:
+                    big_mobile_send = begin - 10 # milliseconds
+                    big_send_mobile_energy = energy
                 print ("%s ; total estimated %d mJ" % 
                        (action_line.strip(), mobile_energy))
             
@@ -172,8 +178,15 @@ def main():
     
     if first_mobile != None:
         pt_total_mobile = trace.total_mobile_energy(first_mobile, last_mobile)
+        pt_small_total = trace.total_mobile_energy(first_mobile, 
+                                                   big_mobile_send)
+        pt_big_total = trace.total_mobile_energy(big_mobile_send, last_mobile)
         print ("Total estimated mobile energy: %d mJ (PowerTutor: %d mJ)" %
                (mobile_energy, pt_total_mobile))
+        print ("Total small est mobile energy: %d mJ (PowerTutor: %d mJ)" %
+               (mobile_energy - big_send_mobile_energy, pt_small_total))
+        print ("Total big est mobile energy: %d mJ (PowerTutor: %d mJ)" %
+               (big_send_mobile_energy, pt_big_total))
 
 if __name__ == '__main__':
     main()

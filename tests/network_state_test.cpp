@@ -7,7 +7,7 @@
 
 CPPUNIT_TEST_SUITE_REGISTRATION(NetworkStateTest);
 
-extern int get_mobile_queue_len(bool downlink);
+extern int get_mobile_queue_len(int *down, int *up);
 extern int wifi_channel_rate();
 extern int wifi_packet_rate();
 extern int wifi_uplink_data_rate();
@@ -34,8 +34,8 @@ NetworkStateTest::testChannelRate()
 void 
 NetworkStateTest::testQueueSize()
 {
-    int down = get_mobile_queue_len(true);
-    int up = get_mobile_queue_len(false);
+    int down = -1, up = -1;
+    (void)get_mobile_queue_len(&down, &up);
     
     CPPUNIT_ASSERT_MESSAGE("Got downlink queue length", down >= 0);
     LOGD("Got downlink queue length: %d\n", down);
