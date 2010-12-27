@@ -90,11 +90,15 @@ do_and_print_result(NetworkType type, size_t datalen)
 }
 
 static int
-connect_sock(struct sockaddr *local_addr)
+connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
 {
     struct sockaddr_in *local_inaddr = (struct sockaddr_in *) local_addr;
-    const char *host = "141.212.110.132";
+    const char *default_host = "141.212.110.132";
     const short port = 4242;
+    
+    if (!remote_host) {
+        remote_host = default_host;
+    }
     
     int sock = socket(PF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -128,7 +132,7 @@ connect_sock(struct sockaddr *local_addr)
     struct sockaddr_in remote_addr;
     memset(&remote_addr, 0, sizeof(remote_addr));
     remote_addr.sin_family = AF_INET;
-    inet_aton(host, &remote_addr.sin_addr);
+    inet_aton(remote_host, &remote_addr.sin_addr);
     remote_addr.sin_port = htons(port);
     socklen = sizeof(remote_addr);
     struct timeval begin, end, diff;
@@ -139,15 +143,28 @@ connect_sock(struct sockaddr *local_addr)
     LOGD("connect() from %s returned after %lu.%06lu seconds\n",
          inet_ntoa(local_inaddr->sin_addr), diff.tv_sec, diff.tv_usec);
     if (rc < 0) {
-        LOGE("Failed to connect to %s:%d (%s)\n", host, port, strerror(errno));
+        LOGE("Failed to connect to %s:%d (%s)\n", 
+             remote_host, port, strerror(errno));
         close(sock);
         return -1;
     }
     return sock;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
+    const char *remote_host = NULL;
+    
+    if (argc > 1) {
+        remote_host = argv[1];
+        for (const char *c = remote_host; *c != '\0'; ++c) {
+            if (isalpha(*c)) {
+                LOGE("Error: specify remote host by IP\n");
+                return -1;
+            }
+        }
+    }
+    
     if (access(RESULTS_DIR, F_OK) != 0) {
         if (mkdir(RESULTS_DIR, 0777) != 0) {
             LOGE("Cannot make dir %s (%s)\n", RESULTS_DIR, strerror(errno));
@@ -178,7 +195,8 @@ int main()
     wifi_addr.sin_family = AF_INET;
     int rc = get_ip_addr("rmnet0", &mobile_addr.sin_addr);
     if (rc == 0) {
-        socks[TYPE_MOBILE] = connect_sock((struct sockaddr *) &mobile_addr);
+        socks[TYPE_MOBILE] = connect_sock((struct sockaddr *) &mobile_addr,
+                                          remote_host);
         if (socks[TYPE_MOBILE] < 0) {
             return -1;
         }
@@ -188,7 +206,8 @@ int main()
     
     rc = get_ip_addr("tiwlan0", &wifi_addr.sin_addr);
     if (rc == 0) {
-        socks[TYPE_WIFI] = connect_sock((struct sockaddr *) &wifi_addr);
+        socks[TYPE_WIFI] = connect_sock((struct sockaddr *) &wifi_addr,
+                                        remote_host);
         if (socks[TYPE_WIFI] < 0) {
             return -1;
         }
