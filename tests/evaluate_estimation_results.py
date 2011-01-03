@@ -106,9 +106,105 @@ class PowerTrace:
                     continue
                     
                 print ("3G in %s state at step %d" % 
-                       (cur_slice["3G-state"], timestamp))
+                       (cur_slice["3G-state"][0], timestamp))
                 mobile_energy += int(cur_slice["3G"][0])
         return mobile_energy
+        
+    def get_mobile_active_intervals(self):
+        '''Returns the time intervals during which the 3G interface is active.
+        
+        Result is a list of 2-tuples: (begin, end).  Timestamps are in
+        milliseconds, so they can be passed to total_mobile_energy().'''
+        activity_start = None
+        intervals = []
+        idle = False
+        for cur_slice in self.__trace:
+            if "3G-state" not in cur_slice:
+                continue
+            
+            timestamp = (self.__trace_start / 1000) + cur_slice["begin"]
+            timestamp_ms = timestamp * 1000
+            if cur_slice["3G-state"][0] == "IDLE":
+                if not idle:
+                    if activity_start != None:
+                        intervals.append((activity_start, timestamp_ms))
+                        activity_start = None
+                idle = True
+            else:
+                if idle:
+                    assert activity_start == None
+                    activity_start = timestamp_ms
+                idle = False
+        
+        if not idle:
+            print "Warning: 3G active at end of trace; ignoring last period"
+        
+        return intervals
+
+class PredictionTest:
+    def __init__(self, libpt_log_lines, trace):
+        action_pending = False
+        begin = None
+        action_line = None
+        action_fields = None
+        mobile_energy = 0
+        first_mobile = None
+        last_mobile = None
+        big_mobile_send = None
+        self.__mobile_events = []
+        self.__wifi_events = []
+        for line in libpt_log_lines:
+            fields = line.split()
+            timestamp = int(float(fields[0]) * 1000) # milliseconds
+
+            if "Starting 3G power tests" in line:
+                first_mobile = timestamp
+                continue
+            elif "Finished 3G power tests" in line:
+                last_mobile = timestamp
+                continue
+
+            if action_pending:
+                end = timestamp
+                duration = end - begin
+                action_type = fields[1]
+                event = {}
+                event["begin"] = begin
+                event["duration"] = duration
+                event["type"] = action_type
+                event["bytes"] = int(action_fields[2])
+                event["bandwidth"] = int(action_fields[4])
+                event["energy"] = int(action_fields[6])
+                if action_type == PowerTrace.TYPE_WIFI:
+                    energy = trace.calculate_energy(begin, end, action_type)
+                    print ("%s ; PowerTutor says %d mJ" % 
+                           (action_line.strip(), energy))
+                    self.__wifi_events.append(event)
+                else:
+                    bytes = int(action_line.split()[2])
+                    energy = int(action_line.split()[6])
+                    mobile_energy += energy
+                    if bytes == 40000:
+                        big_mobile_send = begin - 10 # milliseconds
+                        big_send_mobile_energy = energy
+                    print ("%s ; total estimated %d mJ" % 
+                           (action_line.strip(), mobile_energy))
+                    self.__mobile_events.append(event)
+                    
+                begin = None
+                end = None
+                action_pending = False
+                action_line = None
+                action_fields = None
+            else:
+                begin = timestamp
+                action_pending = True
+                action_line = line
+                action_fields = fields
+
+    def get_mobile_events(self, begin, end):
+        func = lambda event : event["begin"] > begin and event["begin"] < end
+        return filter(func, self.__mobile_events)
 
 def main():
     tmpdir = '/tmp/powertutor_eval'
@@ -131,62 +227,38 @@ def main():
     trace = PowerTrace(power_trace_lines)
     trace.sanity_check(libpt_log_lines)
     
-    action_pending = False
-    begin = None
-    action_line = None
-    mobile_energy = 0
-    first_mobile = None
-    last_mobile = None
-    big_mobile_send = None
-    for line in libpt_log_lines:
-        fields = line.split()
-        timestamp = int(float(fields[0]) * 1000) # milliseconds
-        
-        if "Starting 3G power tests" in line:
-            first_mobile = timestamp
-            continue
-        elif "Finished 3G power tests" in line:
-            last_mobile = timestamp
-            continue
-        
-        if action_pending:
-            end = timestamp
-            duration = end - begin
-            action_type = fields[1]
-            if action_type == PowerTrace.TYPE_WIFI:
-                energy = trace.calculate_energy(begin, end, action_type)
-                print ("%s ; PowerTutor says %d mJ" % 
-                       (action_line.strip(), energy))
-            else:
-                bytes = int(action_line.split()[2])
-                energy = int(action_line.split()[6])
-                mobile_energy += energy
-                if bytes == 40000:
-                    big_mobile_send = begin - 10 # milliseconds
-                    big_send_mobile_energy = energy
-                print ("%s ; total estimated %d mJ" % 
-                       (action_line.strip(), mobile_energy))
-            
-            begin = None
-            end = None
-            action_pending = False
-            action_line = None
-        else:
-            begin = timestamp
-            action_pending = True
-            action_line = line
+    prediction_test = PredictionTest(libpt_log_lines, trace)
     
-    if first_mobile != None:
-        pt_total_mobile = trace.total_mobile_energy(first_mobile, last_mobile)
-        pt_small_total = trace.total_mobile_energy(first_mobile, 
-                                                   big_mobile_send)
-        pt_big_total = trace.total_mobile_energy(big_mobile_send, last_mobile)
-        print ("Total estimated mobile energy: %d mJ (PowerTutor: %d mJ)" %
-               (mobile_energy, pt_total_mobile))
-        print ("Total small est mobile energy: %d mJ (PowerTutor: %d mJ)" %
-               (mobile_energy - big_send_mobile_energy, pt_small_total))
-        print ("Total big est mobile energy: %d mJ (PowerTutor: %d mJ)" %
-               (big_send_mobile_energy, pt_big_total))
+    # [(a,b), (c,d), ...]
+    active_intervals = trace.get_mobile_active_intervals()
+    print "Total estimated mobile energy:"
+    for interval in active_intervals:
+        # XXX: This is failing to capture the first event in each 
+        # XXX:  3G activity interval, due to rounding and the fact that
+        # XXX:  PowerTutor doesn't detect the radio active until the
+        # XXX:  current second of waiting has passed.
+        # TODO: FIX IT.
+        (begin, end) = interval 
+        begin -= 1000 # active interval starts just after event
+        events = prediction_test.get_mobile_events(begin, end)
+        if len(events) == 0:
+            pass #continue
+        total_energy = sum([event["energy"] for event in events])
+        pt_total_energy = trace.total_mobile_energy(begin, end)
+        print ("   [%d,%d] %d events: %d mJ (PowerTutor: %d mJ)" %
+               (begin, end, len(events), total_energy, pt_total_energy))
+        
+    #if first_mobile != None:
+        #pt_total_mobile = trace.total_mobile_energy(first_mobile, last_mobile)
+        #pt_small_total = trace.total_mobile_energy(first_mobile, 
+        #                                           big_mobile_send)
+        #pt_big_total = trace.total_mobile_energy(big_mobile_send, last_mobile)
+        #print ("Total estimated mobile energy: %d mJ (PowerTutor: %d mJ)" %
+        #       (mobile_energy, pt_total_mobile))
+        #print ("Total small est mobile energy: %d mJ (PowerTutor: %d mJ)" %
+        #       (mobile_energy - big_send_mobile_energy, pt_small_total))
+        #print ("Total big est mobile energy: %d mJ (PowerTutor: %d mJ)" %
+        #       (big_send_mobile_energy, pt_big_total))
 
 if __name__ == '__main__':
     main()

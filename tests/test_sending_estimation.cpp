@@ -233,6 +233,13 @@ int main(int argc, char *argv[])
     LOGD("%lu.%06lu Starting 3G power tests\n", now.tv_sec, now.tv_usec);
     fprintf(out, "%lu.%06lu Starting 3G power tests\n",
             now.tv_sec, now.tv_usec);
+            
+    do_and_print_result(TYPE_MOBILE, 5); // FACH
+    sleep(14); // IDLE
+    
+    do_and_print_result(TYPE_MOBILE, 5); // FACH
+    sleep(14); // IDLE
+            
     do_and_print_result(TYPE_MOBILE, 5); // still FACH
     sleep(4);
     do_and_print_result(TYPE_MOBILE, 5); // still FACH
@@ -248,12 +255,12 @@ int main(int argc, char *argv[])
     do_and_print_result(TYPE_MOBILE, 30); // FACH now
     sleep(1);
     do_and_print_result(TYPE_MOBILE, 150); // DCH now
-    sleep(12); // IDLE again
+    sleep(14); // IDLE again
     
     // test DCH timeout plus time to send bytes.
     do_and_print_result(TYPE_MOBILE, 40000); // DCH now
-    LOGD("Done with 3G estimations; waiting 12 seconds for IDLE\n");
-    sleep(12); // hopefully IDLE again
+    LOGD("Done with 3G estimations; waiting 14 seconds for IDLE\n");
+    sleep(14); // hopefully IDLE again
     gettimeofday(&now, NULL);
     LOGD("%lu.%06lu Finished 3G power tests\n", now.tv_sec, now.tv_usec);
     fprintf(out, "%lu.%06lu Finished 3G power tests\n",
