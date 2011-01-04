@@ -332,6 +332,7 @@ static void * ServerThread(void *arg)
     while (1) {
         int rc;
         while (data_recvd == 0 || data[data_recvd - 1] != '\n') {
+            data_recvd = 0;
             rc = read(sock, data, chunksize);
             if (rc <= 0) {
                 if (rc < 0) {
@@ -339,7 +340,9 @@ static void * ServerThread(void *arg)
                 }
                 break;
             }
+            data_recvd += rc;
         }
+        data_recvd = 0;
 #ifdef APP_SEND_ACKS
         // received whole 'line'; send ack
         char ack = 'Q';
@@ -360,12 +363,19 @@ int main()
     int listener = socket(PF_INET, SOCK_STREAM, 0);
     handle_error(listener < 0, "socket");
     
+    int val = 1;
+    int rc = setsockopt(listener, SOL_SOCKET, SO_REUSEADDR,
+                        (char *) &val, sizeof(val));
+    if (rc < 0) {
+        fprintf(stderr, "Cannot set SO_REUSEADDR (%s)\n", strerror(errno));
+    }
+
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(TEST_PORT);
     socklen_t addrlen = sizeof(addr);
-    int rc = bind(listener, (struct sockaddr *)&addr, addrlen);
+    rc = bind(listener, (struct sockaddr *)&addr, addrlen);
     handle_error(rc < 0, "bind");
     rc = listen(listener, 2);
     handle_error(rc < 0, "listen");
