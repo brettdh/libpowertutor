@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <stdio.h>
@@ -9,11 +10,17 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <pthread.h>
 #include <vector>
 #include <deque>
 #include <functional>
-#include "timeops.h"
 using std::vector; using std::min; using std::deque;
+
+#define APP_SEND_ACKS
+static const short TEST_PORT = 4242;
+
+#ifndef SERVER_ONLY
+#include "timeops.h"
 
 #define LOG_TAG "test_sending_estimation"
 #include <cutils/log.h>
@@ -33,16 +40,6 @@ static const char *net_types[2] = {"mobile", "wifi"};
 #endif
 #define RESULTS_FILENAME_MAX_LEN 60
 static FILE *out = NULL;
-
-#define APP_SEND_ACKS
-
-void handle_error(bool fail_condition, const char *str)
-{
-    if (fail_condition) {
-        perror(str);
-        exit(-1);
-    }
-}
 
 static ssize_t
 send_bytes(int sock, size_t datalen)
@@ -114,8 +111,6 @@ do_and_print_result(NetworkType type, size_t datalen)
 #endif
 }
 
-static const short TEST_PORT = 4242;
-
 static int
 connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
 {
@@ -177,93 +172,8 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
     return sock;
 }
 
-static void * ServerThread(void *arg)
-{
-    int sock = (int)arg;
-    const size_t chunksize = 1024*1024;
-    char data[chunksize];
-    memset(data, 0, chunksize);
-    size_t data_recvd = 0;
-    while (1) {
-        int rc;
-        while (data_recvd == 0 || data[data_recvd - 1] != '\n') {
-            rc = read(sock, data, chunksize);
-            if (rc <= 0) {
-                if (rc < 0) {
-                    perror("worker thread: read");
-                }
-                break;
-            }
-        }
-#ifdef APP_SEND_ACKS
-        // received whole 'line'; send ack
-        char ack = 'Q';
-        rc = write(sock, &ack, 1);
-        if (rc != 1) {
-            perror("worker thread: write");
-            break;
-        }
-#endif
-    }
-    close(sock);
-    printf("Worker thread exiting.\n");
-    return NULL;
-}
-
-static void run_server()
-{
-    int listener = socket(PF_INET, SOCK_STREAM, 0);
-    handle_error(listener < 0, "socket");
-    
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(TEST_PORT);
-    socklen_t addrlen = sizeof(addr);
-    int rc = bind(listener, (struct sockaddr *)&addr, addrlen);
-    handle_error(rc < 0, "bind");
-    rc = listen(listener, 2);
-    handle_error(rc < 0, "listen");
-    
-    deque<pthread_t> threads;
-    while (1) {
-        int sock = accept(listener, NULL, NULL);
-        if (sock < 0) {
-            if (errno == EINTR) {
-                break;
-            } else {
-                continue;
-            }
-        }
-        pthread_t new_thread;
-        rc = pthread_create(&new_thread, NULL, ServerThread, (void *) sock);
-        handle_error(rc != 0, "pthread_create");
-        threads.push_back(new_thread);
-    }
-    
-    while (!threads.empty()) {
-        pthread_join(threads[0], NULL);
-        threads.pop_front();
-    }
-}
-
 int main(int argc, char *argv[])
 {
-    int ch;
-    bool server = false;
-    while ((ch = getopt(argc, argv, "l")) != -1) {
-        switch (ch) {
-        case 'l':
-            server = true;
-            break;
-        }
-    }
-    
-    if (server) {
-        run_server();
-        exit(0);
-    }
-    
     const char *remote_host = NULL;
     if (argc > 1) {
         remote_host = argv[1];
@@ -403,3 +313,84 @@ int main(int argc, char *argv[])
     
     return 0;
 }
+#else /* ifndef SERVER_ONLY */
+void handle_error(bool fail_condition, const char *str)
+{
+    if (fail_condition) {
+        perror(str);
+        exit(-1);
+    }
+}
+
+static void * ServerThread(void *arg)
+{
+    int sock = (int)arg;
+    const size_t chunksize = 1024*1024;
+    char data[chunksize];
+    memset(data, 0, chunksize);
+    size_t data_recvd = 0;
+    while (1) {
+        int rc;
+        while (data_recvd == 0 || data[data_recvd - 1] != '\n') {
+            rc = read(sock, data, chunksize);
+            if (rc <= 0) {
+                if (rc < 0) {
+                    perror("worker thread: read");
+                }
+                break;
+            }
+        }
+#ifdef APP_SEND_ACKS
+        // received whole 'line'; send ack
+        char ack = 'Q';
+        rc = write(sock, &ack, 1);
+        if (rc != 1) {
+            perror("worker thread: write");
+            break;
+        }
+#endif
+    }
+    close(sock);
+    printf("Worker thread exiting.\n");
+    return NULL;
+}
+
+int main()
+{
+    int listener = socket(PF_INET, SOCK_STREAM, 0);
+    handle_error(listener < 0, "socket");
+    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(TEST_PORT);
+    socklen_t addrlen = sizeof(addr);
+    int rc = bind(listener, (struct sockaddr *)&addr, addrlen);
+    handle_error(rc < 0, "bind");
+    rc = listen(listener, 2);
+    handle_error(rc < 0, "listen");
+    
+    deque<pthread_t> threads;
+    while (1) {
+        int sock = accept(listener, NULL, NULL);
+        if (sock < 0) {
+            if (errno == EINTR) {
+                break;
+            } else {
+                continue;
+            }
+        }
+        pthread_t new_thread;
+        rc = pthread_create(&new_thread, NULL, ServerThread, (void *) sock);
+        handle_error(rc != 0, "pthread_create");
+        threads.push_back(new_thread);
+    }
+    
+    while (!threads.empty()) {
+        pthread_join(threads[0], NULL);
+        threads.pop_front();
+    }
+
+    return 0;
+}
+#endif /* !ifndef SERVER_ONLY */
