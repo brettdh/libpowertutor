@@ -357,6 +357,9 @@ static void * ServerThread(void *arg)
             }
             data_recvd += rc;
         }
+        if (data_recvd == 0) {
+            break;
+        }
         data_recvd = 0;
 #ifdef APP_SEND_ACKS
         // received whole 'line'; send ack
