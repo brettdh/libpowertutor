@@ -409,7 +409,7 @@ int main()
         rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
                         (char *) &val, sizeof(val));
         if (rc < 0) {
-            LOGE("Cannot make socket TCP_NODELAY\n");
+            fprintf(stderr, "Cannot make socket TCP_NODELAY\n");
         }
         
         pthread_t new_thread;
