@@ -100,9 +100,8 @@ class PowerTrace:
         mobile_energy = 0
         for cur_slice in self.__trace:
             if "3G-state" in cur_slice and cur_slice["3G-state"][0] != "IDLE":
-                timestamp = (self.__trace_start / 1000) + cur_slice["begin"]
-                timestamp_ms = timestamp * 1000
-                if timestamp_ms < begin or timestamp_ms > end:
+                timestamp = self.__trace_start + (cur_slice["begin"] * 1000)
+                if timestamp < begin or timestamp > end:
                     continue
                     
                 print ("3G in %s state at step %d" % 
@@ -122,18 +121,17 @@ class PowerTrace:
             if "3G-state" not in cur_slice:
                 continue
             
-            timestamp = (self.__trace_start / 1000) + cur_slice["begin"]
-            timestamp_ms = timestamp * 1000
+            timestamp = self.__trace_start + (cur_slice["begin"] * 1000)
             if cur_slice["3G-state"][0] == "IDLE":
                 if not idle:
                     if activity_start != None:
-                        intervals.append((activity_start, timestamp_ms))
+                        intervals.append((activity_start, timestamp))
                         activity_start = None
                 idle = True
             else:
                 if idle:
                     assert activity_start == None
-                    activity_start = timestamp_ms
+                    activity_start = timestamp
                 idle = False
         
         if not idle:
@@ -203,7 +201,7 @@ class PredictionTest:
                 action_fields = fields
 
     def get_mobile_events(self, begin, end):
-        func = lambda event : event["begin"] > begin and event["begin"] < end
+        func = lambda event : event["begin"] >= begin and event["begin"] <= end
         return filter(func, self.__mobile_events)
 
 def main():
@@ -214,6 +212,8 @@ def main():
         shutil.rmtree(tmpdir)
     os.mkdir(tmpdir)
     
+    print "Waiting for device..."
+    os.system("adb wait-for-device")
     dev_power_trace = get_most_recent_of("/sdcard/PowerTrace*.log")
     dev_libpt_log = get_most_recent_of("/sdcard/libpowertutor_testing/*")
     print "Using %s and %s" % (power_trace, libpt_log)
@@ -239,7 +239,7 @@ def main():
         # XXX:  current second of waiting has passed.
         # TODO: FIX IT.
         (begin, end) = interval 
-        begin -= 1000 # active interval starts just after event
+        begin -= 3000 # active interval starts just after event
         events = prediction_test.get_mobile_events(begin, end)
         if len(events) == 0:
             pass #continue
