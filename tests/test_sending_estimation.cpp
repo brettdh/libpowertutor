@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <pthread.h>
@@ -107,6 +108,9 @@ do_and_print_result(NetworkType type, size_t datalen)
     if (rc != 1) {
         LOGE("%lu.%06lu  Failed to recv ack (%s)\n", 
              now.tv_sec, now.tv_usec, strerror(errno));
+    } else {
+        LOGD("%lu.%06lu  %s received ack\n", 
+             now.tv_sec, now.tv_usec, net_types[type]);
     }
 #endif
 }
@@ -139,6 +143,13 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
         LOGE("Cannot set zero socket buffer (%s)\n", strerror(errno));
         close(sock);
         return -1;
+    }
+    
+    val = 1;
+    rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
+                    (char *) &val, sizeof(val));
+    if (rc < 0) {
+        LOGE("Cannot make socket TCP_NODELAY\n");
     }
     
     socklen_t socklen = sizeof(struct sockaddr_in);
@@ -310,6 +321,10 @@ int main(int argc, char *argv[])
     do_and_print_result(TYPE_WIFI, 100000);
     sleep(1);
     do_and_print_result(TYPE_WIFI, 1000000);
+    sleep(3);
+    
+    close(socks[TYPE_MOBILE]);
+    close(socks[TYPE_WIFI]);
     
     return 0;
 }
@@ -390,6 +405,13 @@ int main()
                 continue;
             }
         }
+        int val = 1;
+        rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
+                        (char *) &val, sizeof(val));
+        if (rc < 0) {
+            LOGE("Cannot make socket TCP_NODELAY\n");
+        }
+        
         pthread_t new_thread;
         rc = pthread_create(&new_thread, NULL, ServerThread, (void *) sock);
         handle_error(rc != 0, "pthread_create");
