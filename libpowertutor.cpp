@@ -34,6 +34,9 @@ using std::min; using std::max;
 // [1] Zhang et al. "Accurate Online Power Estimation and Automatic Battery
 // Behavior Based Power Model Generation for Smartphones," CODES+ISSS '10.
 
+static const int TCP_HDR_SIZE = 32;
+static const int IP_HDR_SIZE = 20;
+
 // all power vals in mW
 static const int WIFI_TRANSMIT_POWER = 1000;
 static const int WIFI_HIGH_POWER_BASE = 710;
@@ -227,6 +230,11 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     // XXX:  with the data.
     // TODO: make it better.
     
+     // add in TCP/IP headers
+     // XXX: this ignores the possibility of multiple sends
+     // XXX:  being coalesced and sent with only one TCP packet.
+    datalen += (TCP_HDR_SIZE + IP_HDR_SIZE);
+    
     bool downlink = power_model_is_remote();
     
     MobileState old_state = get_mobile_state();
@@ -239,7 +247,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     }
     int threshold = get_dch_threshold(downlink);
     if (old_state == MOBILE_POWER_STATE_DCH ||
-        (queue_len + datalen) >= threshold) { // TODO: add in TCP/IP headers
+        (queue_len + datalen) >= threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
     }
     
@@ -599,8 +607,6 @@ wifi_mtu()
 {
     // could get from ifreq ioctl, but it's 1500, so not bothering for now.
     const int WIFI_DEV_MTU = 1500;
-    const int TCP_HDR_SIZE = 32;
-    const int IP_HDR_SIZE = 20;
     return (WIFI_DEV_MTU - TCP_HDR_SIZE - IP_HDR_SIZE);
 }
 
