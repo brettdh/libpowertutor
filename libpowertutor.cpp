@@ -239,9 +239,15 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     }
     int threshold = get_dch_threshold(downlink);
     if (old_state == MOBILE_POWER_STATE_DCH ||
-        (queue_len + datalen) >= threshold) {
+        (queue_len + datalen) >= threshold) { // TODO: add in TCP/IP headers
         new_state = MOBILE_POWER_STATE_DCH;
     }
+    
+    // XXX: confirmed: the TCP ACK appears to arrive around 800ms after
+    // XXX:  the data left the device.  That seems like way too long, though.
+    // TODO: understand and account for this delay.  It extends the
+    // TODO:  inactivity timer, and that amount contributes to the 
+    // TODO:  power cost of the send.
     
     double duration = ((double)datalen) / bandwidth;
     int fach_energy = 0, dch_energy = 0;
@@ -252,10 +258,13 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
             
             duration += MOBILE_DCH_INACTIVITY_TIMER;
             dch_energy = MOBILE_DCH_POWER * duration;
+            LOGD("Now in DCH: dch_energy %d fach_energy %d\n",
+                 dch_energy, fach_energy);
         } else {
             // cost of transferring data in FACH state + FACH timeout
             duration += MOBILE_FACH_INACTIVITY_TIMER;
             fach_energy = MOBILE_FACH_POWER * duration;
+            LOGD("Now in FACH: fach_energy %d\n", fach_energy);
         }
     } else if (old_state == MOBILE_POWER_STATE_FACH) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
@@ -267,6 +276,9 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
             double fach_duration = min(time_since_last_mobile_activity(), 
                                        MOBILE_FACH_INACTIVITY_TIMER);
             fach_energy = fach_duration * MOBILE_FACH_POWER;
+            LOGD("Now in DCH: extending FACH time by %f seconds "
+                 "(costs %d mJ)\n",
+                 fach_duration, fach_energy);
         } else {
             // extending FACH time
             double fach_duration = min(time_since_last_mobile_activity(), 
@@ -274,6 +286,9 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
             duration += fach_duration;
             
             fach_energy = duration * MOBILE_FACH_POWER;
+            int extend_energy = fach_duration * MOBILE_FACH_POWER;
+            LOGD("Extending FACH time by %f seconds (costs %d mJ)\n",
+                 fach_duration, extend_energy);
         }
     } else {
         assert(old_state == MOBILE_POWER_STATE_DCH);
@@ -282,6 +297,9 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
                                   MOBILE_DCH_INACTIVITY_TIMER);
         duration += dch_duration;
         dch_energy = duration * MOBILE_DCH_POWER;
+        int extend_energy = dch_duration * MOBILE_DCH_POWER;
+        LOGD("Extending DCH time by %f seconds (costs %d mJ)\n",
+             dch_duration, extend_energy);
     }
     // XXX: the above can probably be simplified by calculating
     // XXX:  fach_ and dch_ as if old_state was IDLE, then subtracting
@@ -505,7 +523,7 @@ static bool running = true;
 static void *
 NetworkStatsUpdateThread(void *)
 {
-    struct timespec interval = {1, 0};
+    struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
     struct timespec wait_time;
     
     PthreadScopedLock lock(&update_thread_lock);

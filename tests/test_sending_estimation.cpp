@@ -10,9 +10,10 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <vector>
+#include <deque>
 #include <functional>
 #include "timeops.h"
-using std::vector; using std::min;
+using std::vector; using std::min; using std::deque;
 
 #define LOG_TAG "test_sending_estimation"
 #include <cutils/log.h>
@@ -33,6 +34,16 @@ static const char *net_types[2] = {"mobile", "wifi"};
 #define RESULTS_FILENAME_MAX_LEN 60
 static FILE *out = NULL;
 
+#define APP_SEND_ACKS
+
+void handle_error(bool fail_condition, const char *str)
+{
+    if (fail_condition) {
+        perror(str);
+        exit(-1);
+    }
+}
+
 static ssize_t
 send_bytes(int sock, size_t datalen)
 {
@@ -48,9 +59,14 @@ send_bytes(int sock, size_t datalen)
     
     size_t bytes_sent = 0;
     while (bytes_sent < datalen) {
-        ssize_t bytes_now = min(CHUNKSIZE, datalen - bytes_sent);
+        size_t bytes_now = min(CHUNKSIZE, datalen - bytes_sent);
+        char saved = data[bytes_now - 1];
+        if (bytes_now == (datalen - bytes_sent)) {
+            data[bytes_now - 1] = '\n';
+        }
         int rc = write(sock, data, bytes_now);
-        if (rc != bytes_now) {
+        data[bytes_now - 1] = saved;
+        if (rc != (ssize_t)bytes_now) {
             LOGE("send_bytes: write: %s\n", strerror(errno));
             return -1;
         }
@@ -87,14 +103,24 @@ do_and_print_result(NetworkType type, size_t datalen)
         fprintf(out, "%lu.%06lu  %s done\n",
                 now.tv_sec, now.tv_usec, net_types[type]);
     }
+#ifdef APP_SEND_ACKS
+    char ack;
+    rc = read(socks[type], &ack, 1);
+    gettimeofday(&now, NULL);
+    if (rc != 1) {
+        LOGE("%lu.%06lu  Failed to recv ack (%s)\n", 
+             now.tv_sec, now.tv_usec, strerror(errno));
+    }
+#endif
 }
+
+static const short TEST_PORT = 4242;
 
 static int
 connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
 {
     struct sockaddr_in *local_inaddr = (struct sockaddr_in *) local_addr;
     const char *default_host = "141.212.110.132";
-    const short port = 4242;
     
     if (!remote_host) {
         remote_host = default_host;
@@ -133,7 +159,7 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
     memset(&remote_addr, 0, sizeof(remote_addr));
     remote_addr.sin_family = AF_INET;
     inet_aton(remote_host, &remote_addr.sin_addr);
-    remote_addr.sin_port = htons(port);
+    remote_addr.sin_port = htons(TEST_PORT);
     socklen = sizeof(remote_addr);
     struct timeval begin, end, diff;
     gettimeofday(&begin, NULL);
@@ -144,17 +170,101 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
          inet_ntoa(local_inaddr->sin_addr), diff.tv_sec, diff.tv_usec);
     if (rc < 0) {
         LOGE("Failed to connect to %s:%d (%s)\n", 
-             remote_host, port, strerror(errno));
+             remote_host, TEST_PORT, strerror(errno));
         close(sock);
         return -1;
     }
     return sock;
 }
 
+static void * ServerThread(void *arg)
+{
+    int sock = (int)arg;
+    const size_t chunksize = 1024*1024;
+    char data[chunksize];
+    memset(data, 0, chunksize);
+    size_t data_recvd = 0;
+    while (1) {
+        int rc;
+        while (data_recvd == 0 || data[data_recvd - 1] != '\n') {
+            rc = read(sock, data, chunksize);
+            if (rc <= 0) {
+                if (rc < 0) {
+                    perror("worker thread: read");
+                }
+                break;
+            }
+        }
+#ifdef APP_SEND_ACKS
+        // received whole 'line'; send ack
+        char ack = 'Q';
+        rc = write(sock, &ack, 1);
+        if (rc != 1) {
+            perror("worker thread: write");
+            break;
+        }
+#endif
+    }
+    close(sock);
+    printf("Worker thread exiting.\n");
+    return NULL;
+}
+
+static void run_server()
+{
+    int listener = socket(PF_INET, SOCK_STREAM, 0);
+    handle_error(listener < 0, "socket");
+    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(TEST_PORT);
+    socklen_t addrlen = sizeof(addr);
+    int rc = bind(listener, (struct sockaddr *)&addr, addrlen);
+    handle_error(rc < 0, "bind");
+    rc = listen(listener, 2);
+    handle_error(rc < 0, "listen");
+    
+    deque<pthread_t> threads;
+    while (1) {
+        int sock = accept(listener, NULL, NULL);
+        if (sock < 0) {
+            if (errno == EINTR) {
+                break;
+            } else {
+                continue;
+            }
+        }
+        pthread_t new_thread;
+        rc = pthread_create(&new_thread, NULL, ServerThread, (void *) sock);
+        handle_error(rc != 0, "pthread_create");
+        threads.push_back(new_thread);
+    }
+    
+    while (!threads.empty()) {
+        pthread_join(threads[0], NULL);
+        threads.pop_front();
+    }
+}
+
 int main(int argc, char *argv[])
 {
-    const char *remote_host = NULL;
+    int ch;
+    bool server = false;
+    while ((ch = getopt(argc, argv, "l")) != -1) {
+        switch (ch) {
+        case 'l':
+            server = true;
+            break;
+        }
+    }
     
+    if (server) {
+        run_server();
+        exit(0);
+    }
+    
+    const char *remote_host = NULL;
     if (argc > 1) {
         remote_host = argv[1];
         for (const char *c = remote_host; *c != '\0'; ++c) {
@@ -234,19 +344,25 @@ int main(int argc, char *argv[])
     fprintf(out, "%lu.%06lu Starting 3G power tests\n",
             now.tv_sec, now.tv_usec);
             
+    // expected energy: 410 mW * 6 seconds = 2406 mJ
     do_and_print_result(TYPE_MOBILE, 5); // FACH
     sleep(14); // IDLE
     
+    // expected energy: 410 mW * 6 seconds = 2406 mJ
     do_and_print_result(TYPE_MOBILE, 5); // FACH
     sleep(14); // IDLE
-            
+    
+    // expected energy: 410 mW * 6 seconds = 2406 mJ
     do_and_print_result(TYPE_MOBILE, 5); // still FACH
     sleep(4);
+    // expected energy: 410 mW * 4 seconds = 1604 mJ
     do_and_print_result(TYPE_MOBILE, 5); // still FACH
     sleep(4);
     
+    // expected energy: 410 mW * 4 seconds = 1604 mJ
     do_and_print_result(TYPE_MOBILE, 30); // still FACH
     sleep(1);
+    // expected energy: 410 mW * 1 second = 410 mJ
     do_and_print_result(TYPE_MOBILE, 30); // still FACH
     sleep(1);
     do_and_print_result(TYPE_MOBILE, 30); // DCH now
