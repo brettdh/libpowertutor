@@ -219,6 +219,8 @@ power_model_is_remote()
 #endif
 }
 
+int update_mobile_state();
+
 static int 
 estimate_mobile_energy_cost(int datalen, size_t bandwidth)
 {
@@ -230,6 +232,12 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     // XXX:  with the data.
     // TODO: make it better.
     
+    // by updating here, we get the most up-to-date state for this estimate.
+    int rc = update_mobile_state();
+    if (rc < 0) {
+        LOGE("Warning: failed to update mobile state\n");
+    }
+    
      // add in TCP/IP headers
      // XXX: this ignores the possibility of multiple sends
      // XXX:  being coalesced and sent with only one TCP packet.
@@ -240,14 +248,27 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     MobileState old_state = get_mobile_state();
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
-    int queue_len = 0;
-    int rc = get_mobile_queue_len(&queue_len, NULL);
+    int queue_len = 0, ack_dir_queue_len = 0;
+    rc = get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
     if (rc < 0) {
         return rc;
     }
     int threshold = get_dch_threshold(downlink);
+    LOGD("DCH threshold %d -- predicted queue length %d\n",
+         threshold, queue_len + datalen);
     if (old_state == MOBILE_POWER_STATE_DCH ||
         (queue_len + datalen) >= threshold) {
+        new_state = MOBILE_POWER_STATE_DCH;
+    }
+    
+    int ack_dir_threshold = get_dch_threshold(!downlink);
+    // XXX: WRONG.  don't assume an arbitrary number of bytes 
+    // XXX:  only generates one TCP ack.
+    // TODO: fix.
+    int ack_dir_queue_pred = ack_dir_queue_len + TCP_HDR_SIZE + IP_HDR_SIZE;
+    LOGD("DCH ack-dir threshold %d -- predicted queue length %d\n",
+         ack_dir_threshold, ack_dir_queue_len);
+    if (ack_dir_queue_pred >= ack_dir_threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
     }
     
@@ -256,6 +277,9 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     // TODO: understand and account for this delay.  It extends the
     // TODO:  inactivity timer, and that amount contributes to the 
     // TODO:  power cost of the send.
+    // Preliminary explanation of this: the RTT for the 3G connection
+    //   is just wildly variable.  I've worked around the Nagle/delayed acks
+    //   issue, though, to tighten up the test, which appears to have helped.
     
     double duration = ((double)datalen) / bandwidth;
     int fach_energy = 0, dch_energy = 0;
@@ -630,6 +654,12 @@ wifi_high_state(size_t datalen)
 static int 
 estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 {
+    // update wifi stats here to get more current estimate.
+    int rc = update_wifi_estimated_rates();
+    if (rc < 0) {
+        LOGE("Warning: failed to update wifi stats\n");
+    }
+    
     int power = 0;
     
     // The wifi radio is only in the transmit state for a very short time,
@@ -653,6 +683,9 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 // XXX:  but then the radio will remain in that state for a while, 
 // XXX:  during which it makes sense to keep sending to amortize the
 // XXX:  "tail energy" over several transmissions.  Something like that.
+
+// TODO: consider adding a function that estimates how much it will cost
+// TODO:  to receive N bytes.
 
 int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth)
