@@ -111,10 +111,12 @@ static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
  *       can make those calculations.
  */
 
+enum dir {DOWN=0, UP};
 pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
 static struct timeval last_mobile_activity = {0, 0};
 static int mobile_last_bytes[2] = {-1, -1};
+static int mobile_last_delta_bytes[2] = {0, 0};
 
 static inline MobileState
 get_mobile_state()
@@ -123,9 +125,11 @@ get_mobile_state()
     return mobile_state;
 }
 
-int
+void
 get_mobile_queue_len(int *down_queue, int *up_queue)
 {
+    size_t up_bytes = 0, down_bytes = 0;
+#if 0
     const char *iface = "rmnet0";
     struct in_addr mobile_addr;
     if (get_ip_addr(iface, &mobile_addr) != 0) {
@@ -137,8 +141,6 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
     strcpy(filename, "/proc/net/");
     
     char *suffix = filename + strlen(filename);
-    
-    size_t up_bytes = 0, down_bytes = 0;
     
     const char *suffixes[] = {"tcp", "udp", "raw"};
     for (int i = 0; i < 3; ++i) {
@@ -177,13 +179,28 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
         infile.close();
     }
     
+    return 0;
+#endif
+
+    //  Two ways to do this:
+    //  1) Return the delta_bytes from the last sample.
+    //   (+) Simple
+    //   (-) The queue might have filled more since then
+    //  2) Estimate the delta_bytes from the last second.
+    //   (+) Might grab a more up-to-date estimate of the queues
+    //   (-) Trickier to implement
+    // XXX: doing (1) for now.  might be naive.
+    // TODO: could put the two together.  (PICK UP HERE)
+    PthreadScopedLock lock(&mobile_state_lock);
+    down_bytes = mobile_last_delta_bytes[DOWN];
+    up_bytes = mobile_last_delta_bytes[UP];
+    
     if (down_queue) {
         *down_queue = down_bytes;
     }
     if (up_queue) {
         *up_queue = up_bytes;
     }
-    return 0;
 }
 
 static inline double
@@ -233,10 +250,10 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     // TODO: make it better.
     
     // by updating here, we get the most up-to-date state for this estimate.
-    int rc = update_mobile_state();
-    if (rc < 0) {
-        LOGE("Warning: failed to update mobile state\n");
-    }
+    //int rc = update_mobile_state();
+    //if (rc < 0) {
+    //    LOGE("Warning: failed to update mobile state\n");
+    //}
     
      // add in TCP/IP headers
      // XXX: this ignores the possibility of multiple sends
@@ -249,10 +266,8 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
     int queue_len = 0, ack_dir_queue_len = 0;
-    rc = get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
-    if (rc < 0) {
-        return rc;
-    }
+    get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
+    
     int threshold = get_dch_threshold(downlink);
     LOGD("DCH threshold %d -- predicted queue length %d\n",
          threshold, queue_len + datalen);
@@ -380,7 +395,6 @@ wifi_channel_rate()
 }
 
 pthread_mutex_t wifi_state_lock = PTHREAD_MUTEX_INITIALIZER;
-enum dir {DOWN=0, UP};
 static int wifi_last_bytes[2] = {-1, -1};
 static int wifi_last_packets[2] = {-1, -1};
 static int wifi_data_rates[2] = {-1, -1};
@@ -489,11 +503,6 @@ update_mobile_state()
     if (rc < 0) {
         return rc;
     }
-    int down_queue = 0, up_queue = 0;
-    rc = get_mobile_queue_len(&down_queue, &up_queue);
-    if (rc < 0) {
-        return rc;
-    }
     
     bool state_change = false;
     
@@ -503,8 +512,29 @@ update_mobile_state()
         // there's been activity recently,
         //  and the power state might have changed
         if (mobile_last_bytes[DOWN] != -1) {
-            gettimeofday(&last_mobile_activity, NULL);
             // Make sure we have at least one prior observation
+            
+            gettimeofday(&last_mobile_activity, NULL);
+            
+            // Hypothesis: PowerTutor checks the queue length simply by
+            //  checking the number of bytes transferred in the last second.
+            //  We should do likewise; adding up the socket buffer queues appears
+            //  to be missing some downstream bytes.  This will catch them.
+            int delta_bytes[2] = {0, 0};
+            for (int i = DOWN; i <= UP; ++i) {
+                delta_bytes[i] = bytes[i] - mobile_last_bytes[i];
+                if ((state_change || mobile_state != MOBILE_POWER_STATE_DCH) &&
+                    delta_bytes[i] >= get_dch_threshold(i == DOWN)) {
+                    LOGD("%s bytecount (%d) >= threshold (%d) ; "
+                         "switching to DCH\n",
+                         ((i == DOWN) ? "downlink" : "uplink"),
+                         delta_bytes[i], get_dch_threshold(i == DOWN));
+                    mobile_state = MOBILE_POWER_STATE_DCH;
+                    state_change = true;
+                }
+                mobile_last_delta_bytes[i] = delta_bytes[i];
+            }
+            int down_queue = delta_bytes[DOWN], up_queue = delta_bytes[UP];
             if (mobile_state == MOBILE_POWER_STATE_IDLE) {
                 state_change = true;
                 mobile_state = MOBILE_POWER_STATE_FACH;
@@ -516,7 +546,12 @@ update_mobile_state()
                 }
                 mobile_state = MOBILE_POWER_STATE_DCH;
             }
+        } else {
+            for (int i = DOWN; i <= UP; ++i) {
+                mobile_last_delta_bytes[i] = 0;
+            }
         }
+        
         mobile_last_bytes[DOWN] = bytes[DOWN];
         mobile_last_bytes[UP] = bytes[UP];
     } else {
@@ -555,7 +590,8 @@ static bool running = true;
 static void *
 NetworkStatsUpdateThread(void *)
 {
-    struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
+    //struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
+    struct timespec interval = {1, 0}; // sample every 1s
     struct timespec wait_time;
     
     PthreadScopedLock lock(&update_thread_lock);
@@ -655,10 +691,10 @@ static int
 estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 {
     // update wifi stats here to get more current estimate.
-    int rc = update_wifi_estimated_rates();
-    if (rc < 0) {
-        LOGE("Warning: failed to update wifi stats\n");
-    }
+    //int rc = update_wifi_estimated_rates();
+    //if (rc < 0) {
+    //    LOGE("Warning: failed to update wifi stats\n");
+    //}
     
     int power = 0;
     
