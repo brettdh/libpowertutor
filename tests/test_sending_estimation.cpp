@@ -309,23 +309,17 @@ int main(int argc, char *argv[])
     
     LOGD("Starting wifi power tests\n");
     do_and_print_result(TYPE_WIFI, 25);
-    sleep(1);
+    sleep(10);
     do_and_print_result(TYPE_WIFI, 50);
-    sleep(1);
-    do_and_print_result(TYPE_WIFI, 100);
-    sleep(1);
-    do_and_print_result(TYPE_WIFI, 150);
-    sleep(2);
-    do_and_print_result(TYPE_WIFI, 350);
-    sleep(2);
+    sleep(10);
     do_and_print_result(TYPE_WIFI, 1000);
-    sleep(1);
+    sleep(10);
     do_and_print_result(TYPE_WIFI, 10000);
-    sleep(1);
+    sleep(10);
     do_and_print_result(TYPE_WIFI, 100000);
-    sleep(1);
+    sleep(10);
     do_and_print_result(TYPE_WIFI, 1000000);
-    sleep(3);
+    sleep(10);
     
     close(socks[TYPE_MOBILE]);
     close(socks[TYPE_WIFI]);

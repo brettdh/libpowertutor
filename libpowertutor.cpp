@@ -734,7 +734,7 @@ wifi_high_state(size_t datalen)
 }
 
 static int 
-estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
+estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     // update wifi stats here to get more current estimate.
     //int rc = update_wifi_estimated_rates();
@@ -753,9 +753,17 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
         power = WIFI_LOW_POWER;
     }
     
-    // TODO: finish
-    
-    return (((double)datalen) / bandwidth) * power;
+    // slightly hacky, but here's what's going on here:
+    // 1) PowerTutor's calculation for the WiFi power model:
+    //    a) Figure out when the wifi is in the high-power state (pkt rate)
+    //    b) Calculate the power draw of that state
+    //    c) Model the wifi as uniform consumption over each second
+    //       that it's in the high-power state.
+    // 2) As a result, even if it was only briefly in the high-power state,
+    //    PowerTutor models the entire second as high-power.
+    // 3) I emulate this by rounding up to the next second before
+    //    multiplying by power.
+    return ceil((((double)datalen) / bandwidth) + (rtt_ms / 1000.0)) * power;
 }
 
 // XXX: It may be useful/necessary to factor into these calculations how
@@ -768,6 +776,8 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 
 // TODO: consider adding a function that estimates how much it will cost
 // TODO:  to receive N bytes.
+// Considered and rejected.  The receiver doesn't usually know how many
+//   bytes it will receive; the remote sender does, though.
 
 int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth, size_t rtt_ms)
@@ -775,7 +785,7 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     if (type == TYPE_MOBILE) {
         return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
     } else if (type == TYPE_WIFI) {
-        return estimate_wifi_energy_cost(datalen, bandwidth);
+        return estimate_wifi_energy_cost(datalen, bandwidth, rtt_ms);
     } else assert(false);
     
     return -1;
