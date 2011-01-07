@@ -16,6 +16,7 @@ enum NetworkType {
 // XXX:  since I might need a lot of detail to make good decisions,
 // XXX:  and a simple abstraction might not be powerful enough.
 extern "C"
-int estimate_energy_cost(NetworkType type, size_t datalen, size_t bandwidth);
+int estimate_energy_cost(NetworkType type, size_t datalen, 
+                         size_t bandwidth, size_t rtt_ms);
 
 #endif /* end of include guard: LIBPOWERTUTOR_H_NYF9WXHP */

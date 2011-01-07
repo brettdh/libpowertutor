@@ -115,6 +115,7 @@ enum dir {DOWN=0, UP};
 pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
 static struct timeval last_mobile_activity = {0, 0};
+static struct timeval last_mobile_sample_time = {0, 0};
 static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
 
@@ -124,6 +125,8 @@ get_mobile_state()
     PthreadScopedLock lock(&mobile_state_lock);
     return mobile_state;
 }
+
+int get_net_dev_stats(const char *iface, int bytes[2], int packets[2]);
 
 void
 get_mobile_queue_len(int *down_queue, int *up_queue)
@@ -189,11 +192,36 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
     //  2) Estimate the delta_bytes from the last second.
     //   (+) Might grab a more up-to-date estimate of the queues
     //   (-) Trickier to implement
-    // XXX: doing (1) for now.  might be naive.
-    // TODO: could put the two together.  (PICK UP HERE)
+    //  3) Combine the previous sample and the time since the past sample.
+    //   (+) Easy to implement
+    //   (+) Counts the most recent queued bytes
+    //   (-) Might overestimate the queue
+    // Right now we're experimenting with (3).
+    int bytes[2] = {-1, -1}, dummy[2];
+    int recent_bytes[2] = {0, 0};
+    int rc = get_net_dev_stats("rmnet0", bytes, dummy);
+
     PthreadScopedLock lock(&mobile_state_lock);
+    struct timeval now, diff;
+    gettimeofday(&now, NULL);
+    TIMEDIFF(last_mobile_sample_time, now, diff);
     down_bytes = mobile_last_delta_bytes[DOWN];
     up_bytes = mobile_last_delta_bytes[UP];
+
+    if (rc == 0 && mobile_last_bytes[DOWN] != -1) {
+        recent_bytes[DOWN] = bytes[DOWN] - mobile_last_bytes[DOWN];
+        recent_bytes[UP] = bytes[UP] - mobile_last_bytes[UP];
+    }
+    down_bytes += recent_bytes[DOWN];
+    up_bytes += recent_bytes[UP];
+
+    LOGD("Queue length estimation:\n");
+    LOGD("   last sample time: %lu.%06lu seconds ago\n",
+         diff.tv_sec, diff.tv_usec);
+    LOGD("   downlink: %d bytes from last sample period; %d bytes since\n", 
+         mobile_last_delta_bytes[DOWN], recent_bytes[DOWN]);
+    LOGD("   uplink: %d bytes from last sample period; %d bytes since\n", 
+         mobile_last_delta_bytes[UP], recent_bytes[UP]);
     
     if (down_queue) {
         *down_queue = down_bytes;
@@ -239,7 +267,7 @@ power_model_is_remote()
 int update_mobile_state();
 
 static int 
-estimate_mobile_energy_cost(int datalen, size_t bandwidth)
+estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
 {
     // XXX: this doesn't account for the impact that the large
     // XXX:  RTT of the 3G connection will have on the time it takes
@@ -266,11 +294,11 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
     int queue_len = 0, ack_dir_queue_len = 0;
-    get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
+    get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
     
     int threshold = get_dch_threshold(downlink);
-    LOGD("DCH threshold %d -- predicted queue length %d\n",
-         threshold, queue_len + datalen);
+    LOGD("DCH threshold %d -- queue length %d (%d predicted)\n",
+         threshold, queue_len, queue_len + datalen);
     if (old_state == MOBILE_POWER_STATE_DCH ||
         (queue_len + datalen) >= threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
@@ -297,6 +325,8 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth)
     //   issue, though, to tighten up the test, which appears to have helped.
     
     double duration = ((double)datalen) / bandwidth;
+    duration += rtt_ms / 1000.0;  // accounting for the last TCP ack
+    
     int fach_energy = 0, dch_energy = 0;
     if (old_state == MOBILE_POWER_STATE_IDLE) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
@@ -423,6 +453,9 @@ get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
 {
     size_t iface_len = strlen(iface);
     
+    // XXX: might be faster to just read the integers from
+    // XXX:   /sys/devices/virtual/net/<iface>/statistics/
+    // XXX:    [rx_bytes, tx_bytes, rx_packets, tx_packets]
     char filename[] = "/proc/net/dev";
     
     ifstream infile(filename);
@@ -464,7 +497,7 @@ get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
 int
 update_wifi_estimated_rates()
 {
-    struct timeval now;
+    struct timeval now, diff;
     int bytes[2] = {0,0}, packets[2] = {0,0};
     int rc = get_net_dev_stats("tiwlan0", bytes, packets);
     if (rc < 0) {
@@ -473,6 +506,12 @@ update_wifi_estimated_rates()
 
     TIME(now);
     PthreadScopedLock lock(&wifi_state_lock);
+    TIMEDIFF(last_wifi_observation, now, diff);
+    if (diff.tv_sec == 0) {
+        // too soon to sample again; wait until a second has passed
+        return 0;
+    }
+    
     if (wifi_last_bytes[DOWN] == -1) {
         assert(wifi_last_bytes[UP] == -1 &&
                wifi_last_packets[DOWN] == -1 &&
@@ -507,10 +546,15 @@ update_mobile_state()
     bool state_change = false;
     
     PthreadScopedLock lock(&mobile_state_lock);
-    if (bytes[DOWN] > mobile_last_bytes[DOWN] ||
-        bytes[UP] > mobile_last_bytes[UP]) {
+    struct timeval now, diff;
+    gettimeofday(&now, NULL);
+    TIMEDIFF(last_mobile_sample_time, now, diff);
+    if (diff.tv_sec >= 1 && // only sample this data every second
+        (bytes[DOWN] > mobile_last_bytes[DOWN] ||
+         bytes[UP] > mobile_last_bytes[UP])) {
         // there's been activity recently,
         //  and the power state might have changed
+        gettimeofday(&last_mobile_sample_time, NULL);
         if (mobile_last_bytes[DOWN] != -1) {
             // Make sure we have at least one prior observation
             
@@ -546,16 +590,18 @@ update_mobile_state()
                 }
                 mobile_state = MOBILE_POWER_STATE_DCH;
             }
-        } else {
-            for (int i = DOWN; i <= UP; ++i) {
-                mobile_last_delta_bytes[i] = 0;
-            }
         }
         
         mobile_last_bytes[DOWN] = bytes[DOWN];
         mobile_last_bytes[UP] = bytes[UP];
     } else {
-        // idle for the past second
+        // This still gets checked every 100ms or however often.
+
+        // no activity recently; reset these to zero
+        for (int i = DOWN; i <= UP; ++i) {
+            mobile_last_delta_bytes[i] = 0;
+        }
+
         // check to see if a timeout expired
         double idle_time = time_since_last_mobile_activity(true);
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
@@ -590,8 +636,8 @@ static bool running = true;
 static void *
 NetworkStatsUpdateThread(void *)
 {
-    //struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
-    struct timespec interval = {1, 0}; // sample every 1s
+    struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
+    //struct timespec interval = {1, 0}; // sample every 1s
     struct timespec wait_time;
     
     PthreadScopedLock lock(&update_thread_lock);
@@ -724,10 +770,10 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth)
 // TODO:  to receive N bytes.
 
 int estimate_energy_cost(NetworkType type, // bool downlink, 
-                         size_t datalen, size_t bandwidth)
+                         size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     if (type == TYPE_MOBILE) {
-        return estimate_mobile_energy_cost(datalen, bandwidth);
+        return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
     } else if (type == TYPE_WIFI) {
         return estimate_wifi_energy_cost(datalen, bandwidth);
     } else assert(false);

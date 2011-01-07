@@ -32,6 +32,7 @@ static const short TEST_PORT = 4242;
 
 static int socks[2] = {-1, -1};
 static int bandwidth_up[2] = {0, 0};
+static int rtt_ms[2] = {0, 0};
 static const char *net_types[2] = {"mobile", "wifi"};
 
 #ifdef ANDROID
@@ -78,10 +79,11 @@ do_and_print_result(NetworkType type, size_t datalen)
 {
     struct timeval now;
     gettimeofday(&now, NULL);
-    int energy = estimate_energy_cost(type, datalen, bandwidth_up[type]);
-    LOGD("%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
+    int energy = estimate_energy_cost(type, datalen, 
+                                      bandwidth_up[type], rtt_ms[type]);
+    LOGD("%lu.%06lu  %s %zu bytes, bw_up %zu bytes/sec, rtt %d ms, %d mJ\n",
          now.tv_sec, now.tv_usec,
-         net_types[type], datalen, bandwidth_up[type], energy);
+         net_types[type], datalen, bandwidth_up[type], rtt_ms[type], energy);
     fprintf(out, "%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
             now.tv_sec, now.tv_usec,
             net_types[type], datalen, bandwidth_up[type], energy);
@@ -249,8 +251,10 @@ int main(int argc, char *argv[])
     for (size_t i = 0; i < ifaces.size(); ++i) {
         if (ifaces[i].ip_addr.s_addr == mobile_addr.sin_addr.s_addr) {
             bandwidth_up[TYPE_MOBILE] = ifaces[i].bandwidth_up;
+            rtt_ms[TYPE_MOBILE] = ifaces[i].RTT;
         } else if (ifaces[i].ip_addr.s_addr == wifi_addr.sin_addr.s_addr) {
             bandwidth_up[TYPE_WIFI] = ifaces[i].bandwidth_up;
+            rtt_ms[TYPE_WIFI] = ifaces[i].RTT;
         } else {
             LOGD("Ack!  I don't have an iface with IP %s\n", 
                  inet_ntoa(ifaces[i].ip_addr));

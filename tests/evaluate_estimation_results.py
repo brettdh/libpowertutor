@@ -104,8 +104,8 @@ class PowerTrace:
                 if timestamp < begin or timestamp > end:
                     continue
                     
-                print ("3G in %s state at step %d" % 
-                       (cur_slice["3G-state"][0], timestamp))
+                print ("3G in %-4s state at step %d" % 
+                       (cur_slice["3G-state"][0], timestamp / 1000))
                 mobile_energy += int(cur_slice["3G"][0])
         return mobile_energy
         
