@@ -700,6 +700,8 @@ static inline int
 wifi_channel_rate_component()
 {
     // These are both in Mbps.
+    // XXX: wifi_channel_rate only succeeds if we have root perms.
+    // TODO: make this work for non-root apps calling this function.
     int channel_rate = wifi_channel_rate();
     double uplink_data_rate = int(wifi_uplink_data_rate() * 8.0 / 1000000.0);
     int channel_rate_component = (48 - 0.768 * channel_rate)*uplink_data_rate;
