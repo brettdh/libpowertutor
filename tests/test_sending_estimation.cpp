@@ -14,7 +14,6 @@
 #include <vector>
 #include <functional>
 using std::vector; using std::min;
-#include <net_interface.h>
 #include "../libpowertutor.h"
 
 static const short TEST_PORT = 4242;
@@ -29,7 +28,9 @@ static const short TEST_PORT = 4242;
 
 static int socks[2] = {-1, -1};
 static int bandwidth_up[2] = {0, 0};
+#ifndef SERVER_ONLY
 static int bandwidth_down[2] = {0, 0};
+#endif
 static int rtt_ms[2] = {0, 0};
 static const char *net_types[2] = {"mobile", "wifi"};
 
@@ -272,6 +273,7 @@ struct test_params {
 #include "timeops.h"
 #include "../utils.h"
 #include <libcmm_external_ipc.h>
+#include <net_interface.h>
 
 static int
 connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
@@ -568,12 +570,12 @@ int main()
             
             if (socks[TYPE_MOBILE] != -1 && socks[TYPE_WIFI] != -1) {
                 bool handset_sending, handset_receiving;
-                int rc = get_test_params(socks[TYPE_MOBILE], 
-                                         &handset_sending, 
-                                         &handset_receiving);
-                int rc = get_test_params(socks[TYPE_WIFI], 
-                                         &handset_sending, 
-                                         &handset_receiving);
+                int rc = recv_test_params(socks[TYPE_MOBILE], 
+                                          &handset_sending, 
+                                          &handset_receiving);
+                rc = recv_test_params(socks[TYPE_WIFI], 
+                                      &handset_sending, 
+                                      &handset_receiving);
                 if (rc == 0) {
                     try {
                         if (handset_sending) {

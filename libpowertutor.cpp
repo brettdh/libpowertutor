@@ -23,8 +23,13 @@
 #include "timeops.h"
 #include "utils.h"
 
+#ifdef ANDROID
 #define LOG_TAG "libpowertutor"
 #include <cutils/log.h>
+#else
+#define LOGD printf
+#define LOGE(...) fprintf(stderr, __VA_ARGS__)
+#endif
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
@@ -34,6 +39,8 @@ using std::min; using std::max;
 // [1] Zhang et al. "Accurate Online Power Estimation and Automatic Battery
 // Behavior Based Power Model Generation for Smartphones," CODES+ISSS '10.
 
+// TODO: remove after implementing remote power model estimation.
+#ifdef ANDROID
 static const int TCP_HDR_SIZE = 32;
 static const int IP_HDR_SIZE = 20;
 
@@ -245,6 +252,8 @@ time_since_last_mobile_activity(bool already_locked=false)
     }
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
+#endif // ANDROID
+// TODO: remove after implementing remote power model estimation.
 
 static bool
 power_model_is_remote()
@@ -264,6 +273,8 @@ power_model_is_remote()
 #endif
 }
 
+// TODO: remove after implementing remote power model estimation.
+#ifdef ANDROID
 int update_mobile_state();
 
 static int 
@@ -767,6 +778,8 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
     //    multiplying by power.
     return ceil((((double)datalen) / bandwidth) + (rtt_ms / 1000.0)) * power;
 }
+#endif // ANDROID
+// TODO: remove after implementing remote power model estimation.
 
 // XXX: It may be useful/necessary to factor into these calculations how
 // XXX:  energy cost is amortized over several transmissions.
@@ -784,6 +797,13 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
+#ifndef ANDROID
+    if (power_model_is_remote()) {
+        // TODO: IMPL
+        return 0;
+    }
+    return -1;
+#else
     if (type == TYPE_MOBILE) {
         return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
     } else if (type == TYPE_WIFI) {
@@ -791,4 +811,5 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     } else assert(false);
     
     return -1;
+#endif
 }

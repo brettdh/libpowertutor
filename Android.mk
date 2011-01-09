@@ -6,7 +6,7 @@ MY_ANDROID_SRC_ROOT := $(HOME)/src/android-source
 MY_OUT := $(MY_ANDROID_SRC_ROOT)/out/target/product/generic
 
 MY_SRCS := libpowertutor.cpp timeops.cpp wifi.cpp utils.cpp
-MY_CFLAGS := -g -O0 -Wall -Werror
+MY_CFLAGS := -g -O0 -Wall -Werror -DANDROID
 
 LOCAL_MODULE := libpowertutor
 LOCAL_C_INCLUDES := $(WIFI_INCLUDES)
