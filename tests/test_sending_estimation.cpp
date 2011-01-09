@@ -233,6 +233,7 @@ static void receive_test_data(int sock)
     char *data = new char[chunksize];
     memset(data, 0, chunksize);
     size_t data_recvd = 0;
+    
     while (1) {
         int rc;
         while (data_recvd == 0 || data[data_recvd - 1] != '\x0A') {
@@ -251,7 +252,8 @@ static void receive_test_data(int sock)
             throw TestFailureException();
         }
         data_recvd = 0;
-
+        
+        LOGD("Test line received; sending ack\n");
         // received whole 'line'; send ack
         char ack = 'Q';
         rc = write(sock, &ack, 1);
@@ -262,6 +264,7 @@ static void receive_test_data(int sock)
         }
         
         if (!strncmp(data, TEST_FINISHED_MSG, strlen(TEST_FINISHED_MSG))) {
+            LOGD("Done receiving.\n");
             break;
         }
     }
@@ -475,7 +478,9 @@ int main(int argc, char *argv[])
         rc = write(socks[TYPE_WIFI], &ch, 1);
         if (rc == 1) {
             if (receiver) {
+                LOGD("Recieving 3G test data\n");
                 receive_test_data(socks[TYPE_MOBILE]);
+                LOGD("Recieving wifi test data\n");
                 receive_test_data(socks[TYPE_WIFI]);
             }
         }
@@ -556,6 +561,7 @@ int main()
     rc = listen(listener, 2);
     handle_error(rc < 0, "listen");
     
+    LOGD("Listening for connections...\n");
     try {
         while (1) {
             bool handset_sending, handset_receiving;
@@ -600,7 +606,9 @@ int main()
             if (socks[TYPE_MOBILE] != -1 && socks[TYPE_WIFI] != -1) {
                 try {
                     if (handset_sending) {
+                        LOGD("Receiving 3G test data\n");
                         receive_test_data(socks[TYPE_MOBILE]);
+                        LOGD("Receiving wifi test data\n");
                         receive_test_data(socks[TYPE_WIFI]);
                     }
                     
@@ -622,7 +630,8 @@ int main()
             if (socks[TYPE_WIFI] != -1) {
                 close(socks[TYPE_WIFI]);
             }
-                
+            LOGD("Done with reciever tests.\n");
+            
             socks[TYPE_MOBILE] = -1;
             socks[TYPE_WIFI] = -1;
         }
