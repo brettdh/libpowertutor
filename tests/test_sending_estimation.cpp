@@ -254,7 +254,7 @@ static void receive_test_data(int sock)
             throw TestFailureException();
         }
         
-        if (!strcmp(data, TEST_FINISHED_MSG)) {
+        if (!strncmp(data, TEST_FINISHED_MSG, strlen(TEST_FINISHED_MSG))) {
             break;
         }
     }
@@ -551,6 +551,7 @@ int main()
     
     try {
         while (1) {
+            bool handset_sending, handset_receiving;
             while (socks[TYPE_WIFI] == -1 || socks[TYPE_MOBILE] == -1) {
                 int sock = accept(listener, NULL, NULL);
                 if (sock < 0) {
@@ -566,33 +567,45 @@ int main()
                 if (rc < 0) {
                     fprintf(stderr, "Cannot make socket TCP_NODELAY\n");
                 }
+
+                if (socks[TYPE_MOBILE] == -1) {
+                    rc = recv_test_params(sock, 
+                                          &handset_sending, 
+                                          &handset_receiving);
+                    if (rc != 0) {
+                        close(sock);
+                        socks[TYPE_MOBILE] = -1;
+                    }
+                    continue;
+                }
+                if (socks[TYPE_WIFI] == -1) {
+                    rc = recv_test_params(sock,
+                                          &handset_sending, 
+                                          &handset_receiving);
+                    if (rc != 0) {
+                        close(sock);
+                        socks[TYPE_WIFI] = -1;
+                    }
+                    continue;
+                }
             }
             
             if (socks[TYPE_MOBILE] != -1 && socks[TYPE_WIFI] != -1) {
-                bool handset_sending, handset_receiving;
-                int rc = recv_test_params(socks[TYPE_MOBILE], 
-                                          &handset_sending, 
-                                          &handset_receiving);
-                rc = recv_test_params(socks[TYPE_WIFI], 
-                                      &handset_sending, 
-                                      &handset_receiving);
-                if (rc == 0) {
-                    try {
-                        if (handset_sending) {
-                            receive_test_data(socks[TYPE_MOBILE]);
-                            receive_test_data(socks[TYPE_WIFI]);
-                        }
-                        
-                        char ch;
-                        rc = read(socks[TYPE_WIFI], &ch, 1);
-                        if (rc == 1) {
-                            if (handset_receiving) {
-                                run_sending_tests();
-                            }
-                        }
-                    } catch (TestFailureException e) {
-                        LOGE("Testing failed; closing sockets\n");
+                try {
+                    if (handset_sending) {
+                        receive_test_data(socks[TYPE_MOBILE]);
+                        receive_test_data(socks[TYPE_WIFI]);
                     }
+                    
+                    char ch;
+                    rc = read(socks[TYPE_WIFI], &ch, 1);
+                    if (rc == 1) {
+                        if (handset_receiving) {
+                            run_sending_tests();
+                        }
+                    }
+                } catch (TestFailureException e) {
+                    LOGE("Testing failed; closing sockets\n");
                 }
             }
                 
