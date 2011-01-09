@@ -148,6 +148,13 @@ static void finish_test(int sock)
         LOGE("Failed to send test-finished msg\n");
         throw TestFailureException();
     }
+    
+    char ack;
+    rc = read(sock, &ack, 1);
+    if (rc != 1) {
+        LOGE("Failed to read ack for test-finished msg\n");
+        throw TestFailureException();
+    }
 }
 
 static void run_sending_tests()
