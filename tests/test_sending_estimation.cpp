@@ -714,12 +714,6 @@ static int recv_test_params(int sock,
         LOGD("Error in received test params: unexpected type %d\n", type);
         return -1;
     }
-    socks[type] = sock;
-    bandwidth_up[type] = ntohl(params.bandwidth_down); // handset's upstream
-    bandwidth_down[type] = ntohl(params.bandwidth_up); // handset's downstream
-    rtt_ms[type] = ntohl(params.rtt_ms);
-    *handset_sending = params.handset_sending;
-    *handset_receiving = params.handset_receiving;
     
     char ack = 'Q';
     rc = write(sock, &ack, 1);
@@ -728,6 +722,12 @@ static int recv_test_params(int sock,
         return -1;
     }
     
+    socks[type] = sock;
+    bandwidth_up[type] = ntohl(params.bandwidth_down); // handset's upstream
+    bandwidth_down[type] = ntohl(params.bandwidth_up); // handset's downstream
+    rtt_ms[type] = ntohl(params.rtt_ms);
+    *handset_sending = params.handset_sending;
+    *handset_receiving = params.handset_receiving;
     return 0;
 }
 
@@ -778,25 +778,13 @@ int main()
                     fprintf(stderr, "Cannot make socket TCP_NODELAY\n");
                 }
 
-                if (socks[TYPE_MOBILE] == -1) {
-                    rc = recv_test_params(sock, 
-                                          &handset_sending, 
-                                          &handset_receiving);
-                    if (rc != 0) {
-                        close(sock);
-                        socks[TYPE_MOBILE] = -1;
-                    }
-                    continue;
-                }
-                if (socks[TYPE_WIFI] == -1) {
-                    rc = recv_test_params(sock,
-                                          &handset_sending, 
-                                          &handset_receiving);
-                    if (rc != 0) {
-                        close(sock);
-                        socks[TYPE_WIFI] = -1;
-                    }
-                    continue;
+                // side effect: sets socks[received-type]
+                rc = recv_test_params(sock, 
+                                      &handset_sending, 
+                                      &handset_receiving);
+                if (rc != 0) {
+                    // socks[received-type] was not set
+                    close(sock);
                 }
             }
             
