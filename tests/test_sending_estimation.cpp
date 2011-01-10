@@ -480,6 +480,7 @@ static void *PowerMonitorThread(void *arg)
 
     register_mobile_activity_callback(mobile_activity_callback);
     
+    LOGD("Power monitor thread started.\n");
     PthreadScopedLock lock(&power_monitor_lock);
     while (power_monitor_running && !power_monitor_updated) {
         pthread_cond_wait(&power_monitor_cv, &power_monitor_lock);
@@ -490,6 +491,8 @@ static void *PowerMonitorThread(void *arg)
         // the state is updated; send it along
         int state = htonl(power_monitor_state);
         lock.release();
+        LOGD("Informing remote about %s-state activity\n", 
+             mobile_state_str[ntohl(state)]);
         int rc = write(sock, &state, sizeof(state));
         if (rc != sizeof(state)) {
             break;
@@ -698,6 +701,7 @@ RemotePowerUpdateThread(void *arg)
     int sock = (int) arg;
     set_nodelay(sock);
 
+    LOGD("Remote power monitor thread started\n");
     while (1) {
         int remote_power_state;
         int rc = read(sock, &remote_power_state, sizeof(remote_power_state));
@@ -706,11 +710,13 @@ RemotePowerUpdateThread(void *arg)
         }
 
         MobileState state = (MobileState) ntohl(remote_power_state);
+        LOGD("Got update about %s-state activity\n",
+             mobile_state_str[state]);
         report_remote_mobile_activity(state);
     }
     
     close(sock);
-    LOGD("Remote power thread monitor exiting.\n");
+    LOGD("Remote power monitor thread exiting.\n");
     return NULL;
 }
 
