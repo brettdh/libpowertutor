@@ -163,6 +163,9 @@ class PredictionTest:
             elif "Finished 3G power tests" in line:
                 last_mobile = timestamp
                 continue
+            
+            if "receiver tests" in line:
+                continue
 
             if action_pending:
                 end = timestamp
@@ -184,7 +187,7 @@ class PredictionTest:
                     self.__wifi_events.append(event)
                 else:
                     bytes = int(action_line.split()[2])
-                    energy = int(action_line.split()[6])
+                    energy = int(action_line.split()[10])
                     mobile_energy += energy
                     if bytes == 40000:
                         big_mobile_send = begin - 10 # milliseconds
