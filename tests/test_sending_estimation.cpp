@@ -36,11 +36,12 @@ static const char *net_types[2] = {"mobile", "wifi"};
 
 #ifdef ANDROID
 #define RESULTS_DIR "/sdcard/libpowertutor_testing"
+#define REMOTE_RESULTS_DIR RESULTS_DIR "/remote_results"
 #else
 #define RESULTS_DIR "/tmp/libpowertutor_testing"
 #endif
-#define RESULTS_FILENAME_MAX_LEN 60
-static FILE *out = NULL;
+#define RESULTS_FILENAME_MAX_LEN 75
+static FILE *test_output = NULL;
 
 static int setup_results_dir()
 {
@@ -50,18 +51,127 @@ static int setup_results_dir()
             return -1;
         }
     }
+#ifndef SERVER_ONLY
+    if (access(REMOTE_RESULTS_DIR, F_OK) != 0) {
+        if (mkdir(REMOTE_RESULTS_DIR, 0777) != 0) {
+            LOGE("Cannot make dir %s (%s)\n", 
+                 REMOTE_RESULTS_DIR, strerror(errno));
+            return -1;
+        }
+    }
+#endif
     
     struct timeval now;
     gettimeofday(&now, NULL);
     char filename[RESULTS_FILENAME_MAX_LEN];
     sprintf(filename, RESULTS_DIR "/%lu.log", now.tv_sec);
-    out = fopen(filename, "w");
-    if (!out) {
+    test_output = fopen(filename, "w+");
+    if (!test_output) {
         LOGE("Failed to open %s (%s)\n", filename, strerror(errno));
         return -1;
     }
     return 0;
 }
+
+#ifdef SERVER_ONLY
+static int send_test_results(int sock)
+{
+    LOGD("Sending test results back to handset\n");
+    int len = ftell(test_output);
+    if (len < 0) {
+        LOGE("Error: failed to get file offset: %s\n", strerror(errno));
+        return -1;
+    }
+    rewind(test_output);
+    int fd = fileno(test_output);
+    if (fd < 0) {
+        LOGE("Failed to get file descriptor: %s\n", strerror(errno));
+        return -1;
+    }
+    len = htonl(len);
+    int rc = write(sock, &len, sizeof(len));
+    if (rc != len) {
+        LOGE("Failed to send test result file size: %s\n", strerror(errno));
+        return -1;
+    }
+    len = ntohl(len);
+    
+    rc = sendfile(sock, fd, NULL, len);
+    if (rc != len) {
+        LOGE("Failed to send the test results file: %s\n", strerror(errno));
+        return -1;
+    }
+    int ack = 0;
+    rc = read(sock, &ack, sizeof(ack));
+    if (rc != sizeof(ack)) {
+        LOGE("Failed to get ack of test results file: %s\n", 
+             strerror(errno));
+        return -1;
+    }
+    LOGD("Remote side received %d bytes successfully.\n", ntohl(ack));
+    return 0;
+}
+#else
+// This must be the last thing we do with the socket
+static int receive_test_results(int sock)
+{
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    char filename[RESULTS_FILENAME_MAX_LEN];
+    sprintf(filename, REMOTE_RESULTS_DIR "/%lu.log", now.tv_sec);
+    FILE *remote_test_output = fopen(filename, "w");
+    if (!remote_test_output) {
+        LOGE("Failed to open %s (%s)\n", filename, strerror(errno));
+        return -1;
+    }
+    int fd = fileno(remote_test_output);
+    if (fd < 0) {
+        LOGE("Failed to get file descriptor: %s\n", strerror(errno));
+        fclose(remote_test_output);
+        return -1;
+    }
+    
+    const int CHUNK = 4096;
+    char data[CHUNK];
+    int bytes_read = 0;
+    int bytes_expected = 0;
+    int rc = read(sock, &bytes_expected, sizeof(bytes_expected));
+    if (rc != sizeof(bytes_expected)) {
+        LOGE("Failed to read test file size: %s\n", strerror(errno));
+        fclose(remote_test_output);
+        return -1;
+    }
+    bytes_expected = ntohl(bytes_expected);
+    
+    while (bytes_read < bytes_expected) {
+        rc = read(sock, data, CHUNK);
+        if (rc <= 0) {
+            break;
+        }
+        
+        if (write(fd, data, rc) != rc) {
+            LOGE("Failed to write %d bytes to file: %s\n", 
+                 rc, strerror(errno));
+            fclose(remote_test_output);
+            return -1;
+        }
+        bytes_read += rc;
+    }
+    fclose(remote_test_output);
+    if (bytes_read != bytes_expected) {
+        LOGE("Expected %d bytes of remote test output; only got %d\n",
+             bytes_expected, bytes_read);
+        return -1;
+    }
+    bytes_read = htonl(bytes_read);
+    if (write(sock, &bytes_read, sizeof(bytes_read)) != sizeof(bytes_read)) {
+        LOGE("Failed to send ack of remote test output: %s\n", 
+             strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+#endif
 
 static ssize_t
 send_bytes(int sock, size_t datalen)
@@ -106,7 +216,7 @@ do_and_print_result(NetworkType type, size_t datalen)
     LOGD("%lu.%06lu  %s %zu bytes, bw_up %zu bytes/sec, rtt %d ms, %d mJ\n",
          now.tv_sec, now.tv_usec,
          net_types[type], datalen, bandwidth_up[type], rtt_ms[type], energy);
-    fprintf(out, "%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
+    fprintf(test_output, "%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
             now.tv_sec, now.tv_usec,
             net_types[type], datalen, bandwidth_up[type], energy);
 
@@ -117,13 +227,13 @@ do_and_print_result(NetworkType type, size_t datalen)
     if (rc != (ssize_t) datalen) {
         LOGE("%lu.%06lu  Failed to send %zu bytes (%s)\n", 
              now.tv_sec, now.tv_usec, datalen, strerror(errno));
-        fprintf(out, "%lu.%06lu  Failed to send %zu bytes (%s)\n", 
+        fprintf(test_output, "%lu.%06lu  Failed to send %zu bytes (%s)\n", 
                 now.tv_sec, now.tv_usec, datalen, strerror(errno));
         throw TestFailureException();
     } else {
         LOGD("%lu.%06lu  %s done\n",
              now.tv_sec, now.tv_usec, net_types[type]);
-        fprintf(out, "%lu.%06lu  %s done\n",
+        fprintf(test_output, "%lu.%06lu  %s done\n",
                 now.tv_sec, now.tv_usec, net_types[type]);
     }
 
@@ -165,7 +275,7 @@ static void run_sending_tests()
     struct timeval now;
     gettimeofday(&now, NULL);
     LOGD("%lu.%06lu Starting 3G power tests\n", now.tv_sec, now.tv_usec);
-    fprintf(out, "%lu.%06lu Starting 3G power tests\n",
+    fprintf(test_output, "%lu.%06lu Starting 3G power tests\n",
             now.tv_sec, now.tv_usec);
             
     // expected energy: 410 mW * 6 seconds = 2406 mJ
@@ -203,7 +313,7 @@ static void run_sending_tests()
     sleep(14); // hopefully IDLE again
     gettimeofday(&now, NULL);
     LOGD("%lu.%06lu Finished 3G power tests\n", now.tv_sec, now.tv_usec);
-    fprintf(out, "%lu.%06lu Finished 3G power tests\n",
+    fprintf(test_output, "%lu.%06lu Finished 3G power tests\n",
             now.tv_sec, now.tv_usec);
             
     finish_test(socks[TYPE_MOBILE]);
@@ -489,6 +599,9 @@ int main(int argc, char *argv[])
         LOGE("Testing failed\n");
     }
     
+    if (receive_test_results(socks[TYPE_WIFI]) != 0) {
+        LOGE("Failed to receive remote test results\n");
+    }
     close(socks[TYPE_MOBILE]);
     close(socks[TYPE_WIFI]);
     

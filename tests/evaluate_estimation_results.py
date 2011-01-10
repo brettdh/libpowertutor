@@ -218,11 +218,18 @@ def main():
     print "Waiting for device..."
     os.system("adb wait-for-device")
     dev_power_trace = get_most_recent_of("/sdcard/PowerTrace*.log")
-    dev_libpt_log = get_most_recent_of("/sdcard/libpowertutor_testing/*")
-    print "Using %s and %s" % (power_trace, libpt_log)
-    
     os.system("adb pull %s %s" % (dev_power_trace, power_trace))
-    os.system("adb pull %s %s" % (dev_libpt_log, libpt_log))
+    
+    if use_remote:
+        remote_testdir = ("meatball.eecs.umich.edu:" + 
+                          "/tmp/libpowertutor_testing/*")
+        remote_libpt_log = get_most_recent_of(remote_testdir)
+        os.system("scp %s %s" % (remote_libpt_log, libpt_log))
+    else:
+        dev_libpt_log = get_most_recent_of("/sdcard/libpowertutor_testing/*")
+        os.system("adb pull %s %s" % (dev_libpt_log, libpt_log))
+    
+    print "Using %s and %s" % (power_trace, libpt_log)
     
     power_trace_lines = open(power_trace).readlines()
     libpt_log_lines = open(libpt_log).readlines()
