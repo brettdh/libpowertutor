@@ -163,6 +163,9 @@ class PredictionTest:
             elif "Finished 3G power tests" in line:
                 last_mobile = timestamp
                 continue
+            
+            if "receiver tests" in line:
+                continue
 
             if action_pending:
                 end = timestamp
@@ -184,7 +187,7 @@ class PredictionTest:
                     self.__wifi_events.append(event)
                 else:
                     bytes = int(action_line.split()[2])
-                    energy = int(action_line.split()[6])
+                    energy = int(action_line.split()[10])
                     mobile_energy += energy
                     if bytes == 40000:
                         big_mobile_send = begin - 10 # milliseconds
@@ -219,18 +222,11 @@ def main():
     print "Waiting for device..."
     os.system("adb wait-for-device")
     dev_power_trace = get_most_recent_of("/sdcard/PowerTrace*.log")
-    os.system("adb pull %s %s" % (dev_power_trace, power_trace))
-    
-    if use_remote:
-        remote_testdir = ("meatball.eecs.umich.edu:" + 
-                          "/tmp/libpowertutor_testing/*")
-        remote_libpt_log = get_most_recent_of(remote_testdir)
-        os.system("scp %s %s" % (remote_libpt_log, libpt_log))
-    else:
-        dev_libpt_log = get_most_recent_of("/sdcard/libpowertutor_testing/*")
-        os.system("adb pull %s %s" % (dev_libpt_log, libpt_log))
-    
+    dev_libpt_log = get_most_recent_of("/sdcard/libpowertutor_testing/*")
     print "Using %s and %s" % (power_trace, libpt_log)
+    
+    os.system("adb pull %s %s" % (dev_power_trace, power_trace))
+    os.system("adb pull %s %s" % (dev_libpt_log, libpt_log))
     
     power_trace_lines = open(power_trace).readlines()
     libpt_log_lines = open(libpt_log).readlines()

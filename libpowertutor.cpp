@@ -703,22 +703,36 @@ wifi_uplink_data_rate()
 int
 wifi_packet_rate()
 {
-    PthreadScopedLock lock(&wifi_state_lock);
-    return wifi_packet_rates[DOWN] + wifi_packet_rates[UP];
+    if (power_model_is_remote()) {
+        // keeping track of these stats from the handset
+        //  only marginally improves accuracy.
+        // I might add them later. (TODO?)
+        return 0;
+    } else {
+        PthreadScopedLock lock(&wifi_state_lock);
+        return wifi_packet_rates[DOWN] + wifi_packet_rates[UP];
+    }
 }
 
 static inline int 
 wifi_channel_rate_component()
 {
-    // These are both in Mbps.
-    // XXX: wifi_channel_rate only succeeds if we have root perms.
-    // TODO: make this work for non-root apps calling this function.
-    int channel_rate = wifi_channel_rate();
-    double uplink_data_rate = int(wifi_uplink_data_rate() * 8.0 / 1000000.0);
-    int channel_rate_component = (48 - 0.768 * channel_rate)*uplink_data_rate;
-    LOGD("channel rate %d uplink data rate %f chrate component %d\n",
-         channel_rate, uplink_data_rate, channel_rate_component);
-    return channel_rate_component;
+    if (power_model_is_remote()) {
+        // keeping track of these stats from the handset
+        //  only marginally improves accuracy.
+        // I might add them later. (TODO?)
+        return 0;
+    } else {
+        // These are both in Mbps.
+        // XXX: wifi_channel_rate only succeeds if we have root perms.
+        // TODO: make this work for non-root apps calling this function.
+        int channel_rate = wifi_channel_rate();
+        double uplink_data_rate = int(wifi_uplink_data_rate() * 8.0 / 1000000.0);
+        int channel_rate_component = (48 - 0.768 * channel_rate)*uplink_data_rate;
+        LOGD("channel rate %d uplink data rate %f chrate component %d\n",
+             channel_rate, uplink_data_rate, channel_rate_component);
+        return channel_rate_component;
+    }
 }
 
 static inline int
@@ -797,19 +811,16 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
-#ifndef ANDROID
-    if (power_model_is_remote()) {
-        // TODO: IMPL
-        return 0;
-    }
-    return -1;
-#else
     if (type == TYPE_MOBILE) {
-        return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
+        if (power_model_is_remote()) {
+            // TODO: IMPL
+            return 0;
+        } else {
+            return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
+        }
     } else if (type == TYPE_WIFI) {
         return estimate_wifi_energy_cost(datalen, bandwidth, rtt_ms);
     } else assert(false);
     
     return -1;
-#endif
 }
