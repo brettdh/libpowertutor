@@ -841,12 +841,7 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
                          size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     if (type == TYPE_MOBILE) {
-        if (power_model_is_remote()) {
-            // TODO: IMPL
-            return 0;
-        } else {
-            return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
-        }
+        return estimate_mobile_energy_cost(datalen, bandwidth, rtt_ms);
     } else if (type == TYPE_WIFI) {
         return estimate_wifi_energy_cost(datalen, bandwidth, rtt_ms);
     } else assert(false);
