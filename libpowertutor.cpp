@@ -236,11 +236,21 @@ time_since(struct timeval then)
 static inline double
 time_since_last_mobile_activity(bool already_locked=false)
 {
+    pthread_mutex_t *the_lock = NULL;
+    struct timeval *activity = NULL;
+    if (power_model_is_remote()) {
+        the_lock = &remote_power_state_lock;
+        activity = &remote_last_mobile_activity;
+    } else {
+        the_lock = &mobile_state_lock;
+        activity = &last_mobile_activity;
+    }
+    
     PthreadScopedLock lock;
     if (!already_locked) { 
-        lock.acquire(&mobile_state_lock);
+        lock.acquire(the_lock);
     }
-    return time_since(last_mobile_activity);
+    return time_since(*activity);
 }
 
 
