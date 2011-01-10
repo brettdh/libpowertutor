@@ -367,7 +367,8 @@ static void receive_test_data(NetworkType type)
     char *data = new char[chunksize];
     memset(data, 0, chunksize);
     
-    while (1) {
+    bool test_finished = false;
+    while (!test_finished) {
         // use select here to detect the arrival of bytes,
         //  which should be pretty close to the time that the
         //  wireless interface becomes active.
@@ -397,14 +398,20 @@ static void receive_test_data(NetworkType type)
                 }
                 break;
             }
+            
             if (total_bytes == 0) {
-                // first 4 bytes is the energy prediction
-                int *pred = (int *) data;
-                energy_prediction = ntohl(*pred);
-                
-                // overwrite the binary data so I won't 
-                //  interpret any of the bytes as newlines
-                memset(data, 'F', sizeof(int));
+                test_finished = !strncmp(data, TEST_FINISHED_MSG, 
+                                         strlen(TEST_FINISHED_MSG));
+
+                if (!test_finished) {
+                    // first 4 bytes is the energy prediction
+                    int *pred = (int *) data;
+                    energy_prediction = ntohl(*pred);
+                    
+                    // overwrite the binary data so I won't 
+                    //  interpret any of the bytes as newlines
+                    memset(data, 'F', sizeof(int));
+                }
             }
             bytes_now = rc;
             total_bytes += bytes_now;
@@ -413,20 +420,25 @@ static void receive_test_data(NetworkType type)
             delete [] data;
             throw TestFailureException();
         }
-        gettimeofday(&now, NULL);
-        LOGD("%lu.%06lu  %s done; %zu bytes, %zu bytes/sec down, "
-             "rtt %d ms, %d mJ\n",
-             now.tv_sec, now.tv_usec, net_types[type], total_bytes, 
-             bandwidth_down[type], rtt_ms[type], energy_prediction);
-             
-        fprintf(test_output, "%lu.%06lu  %s %zu bytes, "
-                "%zu bytes/sec down, rtt %d ms, %d mJ\n"
-                "%lu.%06lu  %s done\n",
-                begin.tv_sec, begin.tv_usec,
-                net_types[type], total_bytes, 
-                bandwidth_down[type], rtt_ms[type], energy_prediction,
-                now.tv_sec, now.tv_usec, net_types[type]);
         
+        gettimeofday(&now, NULL);
+        if (test_finished) {
+            LOGD("%lu.%06lu  Received %s-test-finished message\n",
+                 now.tv_sec, now.tv_usec, net_types[type]);
+        } else {
+            LOGD("%lu.%06lu  %s done; %zu bytes, %zu bytes/sec down, "
+                 "rtt %d ms, %d mJ\n",
+                 now.tv_sec, now.tv_usec, net_types[type], total_bytes, 
+                 bandwidth_down[type], rtt_ms[type], energy_prediction);
+                 
+            fprintf(test_output, "%lu.%06lu  %s %zu bytes, "
+                    "%zu bytes/sec down, rtt %d ms, %d mJ\n"
+                    "%lu.%06lu  %s done\n",
+                    begin.tv_sec, begin.tv_usec,
+                    net_types[type], total_bytes, 
+                    bandwidth_down[type], rtt_ms[type], energy_prediction,
+                    now.tv_sec, now.tv_usec, net_types[type]);
+        }
         // received whole 'line'; send ack
         char ack = 'Q';
         rc = write(sock, &ack, 1);
@@ -436,9 +448,8 @@ static void receive_test_data(NetworkType type)
             throw TestFailureException();
         }
         
-        if (!strncmp(data, TEST_FINISHED_MSG, strlen(TEST_FINISHED_MSG))) {
+        if (test_finished) {
             LOGD("Done receiving.\n");
-            break;
         }
     }
     delete [] data;
@@ -612,6 +623,21 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    for (size_t i = 0; i < ifaces.size(); ++i) {
+        if (ifaces[i].ip_addr.s_addr == mobile_addr.sin_addr.s_addr) {
+            bandwidth_up[TYPE_MOBILE] = ifaces[i].bandwidth_up;
+            bandwidth_down[TYPE_MOBILE] = ifaces[i].bandwidth_down;
+            rtt_ms[TYPE_MOBILE] = ifaces[i].RTT;
+        } else if (ifaces[i].ip_addr.s_addr == wifi_addr.sin_addr.s_addr) {
+            bandwidth_up[TYPE_WIFI] = ifaces[i].bandwidth_up;
+            bandwidth_down[TYPE_WIFI] = ifaces[i].bandwidth_down;
+            rtt_ms[TYPE_WIFI] = ifaces[i].RTT;
+        } else {
+            LOGD("Ack!  I don't have an iface with IP %s\n", 
+                 inet_ntoa(ifaces[i].ip_addr));
+        }
+    }
+
     socks[TYPE_MOBILE] = connect_sock((struct sockaddr *) &mobile_addr,
                                       remote_host);
     if (socks[TYPE_MOBILE] < 0) {
@@ -630,21 +656,6 @@ int main(int argc, char *argv[])
     rc = send_test_params(TYPE_WIFI, sender, receiver);
     if (rc < 0) {
         return -1;
-    }
-    
-    for (size_t i = 0; i < ifaces.size(); ++i) {
-        if (ifaces[i].ip_addr.s_addr == mobile_addr.sin_addr.s_addr) {
-            bandwidth_up[TYPE_MOBILE] = ifaces[i].bandwidth_up;
-            bandwidth_down[TYPE_MOBILE] = ifaces[i].bandwidth_down;
-            rtt_ms[TYPE_MOBILE] = ifaces[i].RTT;
-        } else if (ifaces[i].ip_addr.s_addr == wifi_addr.sin_addr.s_addr) {
-            bandwidth_up[TYPE_WIFI] = ifaces[i].bandwidth_up;
-            bandwidth_down[TYPE_WIFI] = ifaces[i].bandwidth_down;
-            rtt_ms[TYPE_WIFI] = ifaces[i].RTT;
-        } else {
-            LOGD("Ack!  I don't have an iface with IP %s\n", 
-                 inet_ntoa(ifaces[i].ip_addr));
-        }
     }
     
     LOGD("Waiting for first power observations...\n");
