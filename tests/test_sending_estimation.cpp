@@ -210,14 +210,15 @@ send_bytes(int sock, size_t datalen, int energy_prediction)
         }
         int rc = write(sock, data, bytes_now);
         data[bytes_now - 1] = saved;
+        if (bytes_sent == 0) {
+            memset(data, 'F', sizeof(int));
+        }
+        
         if (rc != (ssize_t)bytes_now) {
             LOGE("send_bytes: write: %s\n", strerror(errno));
             return -1;
         }
         
-        if (bytes_sent == 0) {
-            memset(data, 'F', sizeof(int));
-        }
         bytes_sent += bytes_now;
     }
     return (ssize_t)bytes_sent;
@@ -399,6 +400,10 @@ static void receive_test_data(NetworkType type)
                 // first 4 bytes is the energy prediction
                 int *pred = (int *) data;
                 energy_prediction = ntohl(*pred);
+                
+                // overwrite the binary data so I won't 
+                //  interpret any of the bytes as newlines
+                memset(data, 'F', sizeof(int));
             }
             data_recvd += rc;
         }
