@@ -47,13 +47,7 @@ static const int WIFI_TRANSMIT_POWER = 1000;
 static const int WIFI_HIGH_POWER_BASE = 710;
 static const int WIFI_LOW_POWER = 20;
 
-enum MobileState {
-    MOBILE_POWER_STATE_IDLE=0,
-    MOBILE_POWER_STATE_FACH,
-    MOBILE_POWER_STATE_DCH
-};
-
-static const char *mobile_state_str[3] = {
+const char *mobile_state_str[3] = {
     "IDLE", "FACH", "DCH"
 };
 
@@ -124,11 +118,45 @@ static struct timeval last_mobile_sample_time = {0, 0};
 static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
 
+#ifdef ANDROID
+static void (*mobile_activity_callback)(MobileState) = NULL;
+#endif
+
+// remote power model state: only what's needed for decent accuracy
+static pthread_mutex_t remote_power_state_lock = PTHREAD_MUTEX_INITIALIZER;
+// TODO: support multiple remotes.
+static struct timeval remote_last_mobile_activity = {0, 0};
+static MobileState remote_mobile_state = MOBILE_POWER_STATE_IDLE;
+
+
+static bool
+power_model_is_remote()
+{
+    // XXX: HACKTASTIC.
+    // XXX:   The point of this is to decide whether I'm estimating
+    // XXX:   power usage based on local or remote information.
+    // XXX:   In the present world, I don't have any mobile-to-mobile
+    // XXX:   communication, so it's sufficient to ask whether I'm
+    // XXX:   on an Android device.
+    // XXX:   Later, I'll need to differentiate between minimizing
+    // XXX:   local vs. remote power consumption, but this is okay for now.
+#ifdef ANDROID
+    return false;
+#else
+    return true;
+#endif
+}
+
 static inline MobileState
 get_mobile_state()
 {
-    PthreadScopedLock lock(&mobile_state_lock);
-    return mobile_state;
+    if (power_model_is_remote()) {
+        PthreadScopedLock lock(&remote_power_state_lock);
+        return remote_mobile_state;
+    } else {
+        PthreadScopedLock lock(&mobile_state_lock);
+        return mobile_state;
+    }
 }
 
 int get_net_dev_stats(const char *iface, int bytes[2], int packets[2]);
@@ -136,59 +164,19 @@ int get_net_dev_stats(const char *iface, int bytes[2], int packets[2]);
 void
 get_mobile_queue_len(int *down_queue, int *up_queue)
 {
-    size_t up_bytes = 0, down_bytes = 0;
-#if 0
-    const char *iface = "rmnet0";
-    struct in_addr mobile_addr;
-    if (get_ip_addr(iface, &mobile_addr) != 0) {
-        LOGE("Failed to get ip addr of %s\n", iface);
-        return -1;
-    }
-    
-    char filename[50];
-    strcpy(filename, "/proc/net/");
-    
-    char *suffix = filename + strlen(filename);
-    
-    const char *suffixes[] = {"tcp", "udp", "raw"};
-    for (int i = 0; i < 3; ++i) {
-        strcpy(suffix, suffixes[i]);
-        ifstream infile(filename);
-        string junk, line;
-        getline(infile, junk); // skip the header line
-        while (getline(infile, line)) {
-            //  0              1           2    3                 4
-            // sl  local_address rem_address   st tx_queue:rx_queue ...
-            // 0:  0100007F:13AD 00000000:0000 0A 00000000:00000000 ...
-            in_addr_t addr;
-            istringstream in(line);
-            in >> junk >> hex >> addr;
-            if (!in) {
-                LOGE("Failed to parse ip addr\n");
-                return -1;
-            }
-            if (addr != mobile_addr.s_addr) {
-                continue;
-            }
-            int tx_bytes = 0, rx_bytes = 0;
-            in >> junk >> junk >> junk;
-            in >> hex >> tx_bytes;
-            in.ignore(1);
-            in >> hex >> rx_bytes;
-            if (!in) {
-                LOGE("Failed to parse queue size\n");
-                return -1;
-            }
-            //getline(in, junk);
-            
-            up_bytes += tx_bytes;
-            down_bytes += rx_bytes;
+    if (power_model_is_remote()) {
+        // TODO: share this data too?
+        // TODO: or guess at it?
+        if (down_queue) {
+            *down_queue = 0;
         }
-        infile.close();
+        if (up_queue) {
+            *up_queue = 0;
+        }
+        return;
     }
-    
-    return 0;
-#endif
+
+    size_t up_bytes = 0, down_bytes = 0;
 
     //  Two ways to do this:
     //  1) Return the delta_bytes from the last sample.
@@ -237,39 +225,24 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
 }
 
 static inline double
-time_since_last_mobile_activity(bool already_locked=false)
+time_since(struct timeval then)
 {
     struct timeval dur, now;
     TIME(now);
-    {
-        PthreadScopedLock lock;
-        if (!already_locked) { 
-            lock.acquire(&mobile_state_lock);
-        }
-        TIMEDIFF(last_mobile_activity, now, dur);
-    }
+    TIMEDIFF(then, now, dur);
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
 
-static bool
-power_model_is_remote()
+static inline double
+time_since_last_mobile_activity(bool already_locked=false)
 {
-    // XXX: HACKTASTIC.
-    // XXX:   The point of this is to decide whether I'm estimating
-    // XXX:   power usage based on local or remote information.
-    // XXX:   In the present world, I don't have any mobile-to-mobile
-    // XXX:   communication, so it's sufficient to ask whether I'm
-    // XXX:   on an Android device.
-    // XXX:   Later, I'll need to differentiate between minimizing
-    // XXX:   local vs. remote power consumption, but this is okay for now.
-#ifdef ANDROID
-    return false;
-#else
-    return true;
-#endif
+    PthreadScopedLock lock;
+    if (!already_locked) { 
+        lock.acquire(&mobile_state_lock);
+    }
+    return time_since(last_mobile_activity);
 }
 
-int update_mobile_state();
 
 static int 
 estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
@@ -281,12 +254,6 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     // XXX:  accurate, I have to accurately guess what TCP is going to do
     // XXX:  with the data.
     // TODO: make it better.
-    
-    // by updating here, we get the most up-to-date state for this estimate.
-    //int rc = update_mobile_state();
-    //if (rc < 0) {
-    //    LOGE("Warning: failed to update mobile state\n");
-    //}
     
      // add in TCP/IP headers
      // XXX: this ignores the possibility of multiple sends
@@ -434,11 +401,14 @@ wifi_channel_rate()
 #endif
 }
 
+
 pthread_mutex_t wifi_state_lock = PTHREAD_MUTEX_INITIALIZER;
-static int wifi_last_bytes[2] = {-1, -1};
-static int wifi_last_packets[2] = {-1, -1};
 static int wifi_data_rates[2] = {-1, -1};
 static int wifi_packet_rates[2] = {-1, -1};
+
+#ifdef ANDROID
+static int wifi_last_bytes[2] = {-1, -1};
+static int wifi_last_packets[2] = {-1, -1};
 static struct timeval last_wifi_observation = {0, 0};
 
 // caller must hold wifi_state_lock
@@ -457,6 +427,7 @@ static void store_counts(int *wifi_last, int *current)
         wifi_last[i] = current[i];
     }
 }
+#endif
 
 int
 get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
@@ -504,6 +475,7 @@ get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
     return rc;
 }
 
+#ifdef ANDROID
 int
 update_wifi_estimated_rates()
 {
@@ -554,6 +526,7 @@ update_mobile_state()
     }
     
     bool state_change = false;
+    bool mobile_activity = false;
     
     PthreadScopedLock lock(&mobile_state_lock);
     struct timeval now, diff;
@@ -569,6 +542,7 @@ update_mobile_state()
             // Make sure we have at least one prior observation
             
             gettimeofday(&last_mobile_activity, NULL);
+            mobile_activity = true;
             
             // Hypothesis: PowerTutor checks the queue length simply by
             //  checking the number of bytes transferred in the last second.
@@ -613,7 +587,7 @@ update_mobile_state()
         }
 
         // check to see if a timeout expired
-        double idle_time = time_since_last_mobile_activity(true);
+        double idle_time = time_since_last_mobile_activity();
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
             if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
                 state_change = true;
@@ -623,6 +597,14 @@ update_mobile_state()
                 //   so that we wait for the full FACH timeout
                 //   before going to IDLE.
                 gettimeofday(&last_mobile_activity, NULL);
+
+                // We don't fire the activity callback as a result of this,
+                //   because it is the remote code's responsibility to 
+                //   watch for the timeouts, and that is separate from this
+                //   update code, which only runs on the handset.
+                // It is the remote code's responsibility beacuse, 
+                //   in the absence of activity, the timeouts can be detected
+                //   without using the network.
             }
         } else if (mobile_state == MOBILE_POWER_STATE_FACH) {
             if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
@@ -631,11 +613,51 @@ update_mobile_state()
             }
         }
     }
+
     if (state_change) {
         LOGD("mobile state changed to %s\n", 
              mobile_state_str[mobile_state]);
     }
+
+    // need copies to avoid holding lock while running callback.
+    void (*activity_callback)(MobileState) = mobile_activity_callback;
+    MobileState new_state = mobile_state;
+    lock.release();
+
+    if (mobile_activity) {
+        activity_callback(state);
+    }
     return 0;
+}
+#endif // ANDROID
+
+static void
+update_remote_power_model()
+{
+    bool state_change = false;
+
+    PthreadScopedLock lock(&remote_power_state_lock);
+    double idle_time = time_since(remote_last_mobile_activity);
+    if (remote_mobile_state == MOBILE_POWER_STATE_DCH) {
+        if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
+            state_change = true;
+            remote_mobile_state = MOBILE_POWER_STATE_FACH;
+            
+            // mark this state change as an "activity,"
+            //   so that we wait for the full FACH timeout
+            //   before going to IDLE.
+            gettimeofday(&remote_last_mobile_activity, NULL);
+        }
+    } else if (remote_mobile_state == MOBILE_POWER_STATE_FACH) {
+        if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
+            state_change = true;
+            remote_mobile_state = MOBILE_POWER_STATE_IDLE;
+        }
+    }
+    if (state_change) {
+        LOGD("Remote mobile state changed to %s\n",
+             mobile_state_str[remote_mobile_state]);
+    }
 }
 
 #ifdef BUILDING_SHLIB
@@ -652,6 +674,7 @@ NetworkStatsUpdateThread(void *)
     
     PthreadScopedLock lock(&update_thread_lock);
     while (running) {
+#ifdef ANDROID
         int rc = update_wifi_estimated_rates();
         if (rc < 0) {
             LOGE("Warning: failed to update wifi stats\n");
@@ -660,6 +683,11 @@ NetworkStatsUpdateThread(void *)
         if (rc < 0) {
             LOGE("Warning: failed to update mobile state\n");
         }
+#else
+        // TODO: This could work on Android, too (handset-to-handset)
+        // TODO:  (but doesn't right now)
+        update_remote_power_model();
+#endif
         
         wait_time = abs_time(interval);
         pthread_cond_timedwait(&update_thread_cv, &update_thread_lock, 
@@ -770,12 +798,6 @@ wifi_high_state(size_t datalen)
 static int 
 estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
-    // update wifi stats here to get more current estimate.
-    //int rc = update_wifi_estimated_rates();
-    //if (rc < 0) {
-    //    LOGE("Warning: failed to update wifi stats\n");
-    //}
-    
     int power = 0;
     
     // The wifi radio is only in the transmit state for a very short time,
@@ -828,4 +850,23 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     } else assert(false);
     
     return -1;
+}
+
+
+// only on handsets.
+void register_mobile_activity_callback(void (*callback)(MobileState))
+{
+#ifdef ANDROID
+    PthreadScopedLock lock(&mobile_state_lock);
+    mobile_activity_callback = callback;
+#endif
+}
+
+void report_remote_mobile_activity(/* struct in_addr ip_addr, */ MobileState state)
+{
+    PthreadScopedLock lock(&remote_power_state_lock);
+
+    // TODO: support multiple remotes.
+    remote_mobile_state = state;
+    gettimeofday(&remote_last_mobile_activity, NULL);
 }

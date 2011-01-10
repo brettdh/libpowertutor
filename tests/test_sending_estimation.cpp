@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <assert.h>
+#include <pthread.h>
 #include <vector>
 #include <functional>
 using std::vector; using std::min;
@@ -50,17 +51,7 @@ static int setup_results_dir()
             return -1;
         }
     }
-/*
-#ifndef SERVER_ONLY
-    if (access(REMOTE_RESULTS_DIR, F_OK) != 0) {
-        if (mkdir(REMOTE_RESULTS_DIR, 0777) != 0) {
-            LOGE("Cannot make dir %s (%s)\n", 
-                 REMOTE_RESULTS_DIR, strerror(errno));
-            return -1;
-        }
-    }
-#endif
-*/    
+
     struct timeval now;
     gettimeofday(&now, NULL);
     char filename[RESULTS_FILENAME_MAX_LEN];
@@ -72,112 +63,6 @@ static int setup_results_dir()
     }
     return 0;
 }
-
-// not needed anymore; now we send the predictions in the data stream.
-//  This way, we only rely on the timestamps on the handset when 
-//  analyzing the test results.
-/*
-#ifdef SERVER_ONLY
-#include <sys/sendfile.h>
-static int send_test_results(int sock)
-{
-    LOGD("Sending test results back to handset\n");
-    int len = ftell(test_output);
-    if (len < 0) {
-        LOGE("Error: failed to get file offset: %s\n", strerror(errno));
-        return -1;
-    }
-    rewind(test_output);
-    int fd = fileno(test_output);
-    if (fd < 0) {
-        LOGE("Failed to get file descriptor: %s\n", strerror(errno));
-        return -1;
-    }
-    len = htonl(len);
-    int rc = write(sock, &len, sizeof(len));
-    if (rc != sizeof(len)) {
-        LOGE("Failed to send test result file size: %s\n", strerror(errno));
-        return -1;
-    }
-    len = ntohl(len);
-    
-    rc = sendfile(sock, fd, NULL, len);
-    if (rc != len) {
-        LOGE("Failed to send the test results file: %s\n", strerror(errno));
-        return -1;
-    }
-    int ack = 0;
-    rc = read(sock, &ack, sizeof(ack));
-    if (rc != sizeof(ack)) {
-        LOGE("Failed to get ack of test results file: %s\n", 
-             strerror(errno));
-        return -1;
-    }
-    LOGD("Remote side received %d bytes successfully.\n", ntohl(ack));
-    return 0;
-}
-#else
-// This must be the last thing we do with the socket
-static int receive_test_results(int sock)
-{
-    struct timeval now;
-    gettimeofday(&now, NULL);
-    char filename[RESULTS_FILENAME_MAX_LEN];
-    sprintf(filename, REMOTE_RESULTS_DIR "/%lu.log", now.tv_sec);
-    FILE *remote_test_output = fopen(filename, "w");
-    if (!remote_test_output) {
-        LOGE("Failed to open %s (%s)\n", filename, strerror(errno));
-        return -1;
-    }
-    int fd = fileno(remote_test_output);
-    if (fd < 0) {
-        LOGE("Failed to get file descriptor: %s\n", strerror(errno));
-        fclose(remote_test_output);
-        return -1;
-    }
-    
-    const int CHUNK = 4096;
-    char data[CHUNK];
-    int bytes_read = 0;
-    int bytes_expected = 0;
-    int rc = read(sock, &bytes_expected, sizeof(bytes_expected));
-    if (rc != sizeof(bytes_expected)) {
-        LOGE("Failed to read test file size: %s\n", strerror(errno));
-        fclose(remote_test_output);
-        return -1;
-    }
-    bytes_expected = ntohl(bytes_expected);
-    
-    while (bytes_read < bytes_expected) {
-        rc = read(sock, data, CHUNK);
-        if (rc <= 0) {
-            break;
-        }
-        
-        if (write(fd, data, rc) != rc) {
-            LOGE("Failed to write %d bytes to file: %s\n", 
-                 rc, strerror(errno));
-            fclose(remote_test_output);
-            return -1;
-        }
-        bytes_read += rc;
-    }
-    fclose(remote_test_output);
-    if (bytes_read != bytes_expected) {
-        LOGE("Expected %d bytes of remote test output; only got %d\n",
-             bytes_expected, bytes_read);
-        return -1;
-    }
-    bytes_read = htonl(bytes_read);
-    if (write(sock, &bytes_read, sizeof(bytes_read)) != sizeof(bytes_read)) {
-        LOGE("Failed to send ack of remote test output: %s\n", 
-             strerror(errno));
-        return -1;
-    }
-    return 0;
-}
-#endif
-*/
 
 // datalen must be at least 5 bytes, so I can stuff the prediction and newline
 static ssize_t
@@ -464,6 +349,16 @@ struct test_params {
     short handset_receiving;
 };
 
+static void set_nodelay(int sock)
+{
+    int val = 1;
+    int rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
+                        (char *) &val, sizeof(val));
+    if (rc < 0) {
+        fprintf(stderr, "Cannot make socket TCP_NODELAY\n");
+    }
+}
+
 #ifndef SERVER_ONLY
 #include "timeops.h"
 #include "../utils.h"
@@ -500,13 +395,8 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
         return -1;
     }
     
-    val = 1;
-    rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
-                    (char *) &val, sizeof(val));
-    if (rc < 0) {
-        LOGE("Cannot make socket TCP_NODELAY\n");
-    }
-    
+    set_nodelay(sock);
+
     socklen_t socklen = sizeof(struct sockaddr_in);
     rc = bind(sock, local_addr, socklen);
     if (rc < 0) {
@@ -566,6 +456,48 @@ static int send_test_params(NetworkType type, bool sender, bool receiver)
     LOGD("Successfully sent %s test params\n", net_types[type]);
     
     return 0;
+}
+
+static pthread_mutex_t power_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t power_monitor_cv = PTHREAD_COND_INITIALIZER;
+static bool power_monitor_running = true;
+static bool power_monitor_updated = false;
+static MobileState power_monitor_state = MOBILE_POWER_STATE_IDLE;
+
+static mobile_activity_callback(MobileState state)
+{
+    PthreadScopedLock lock(&power_monitor_lock);
+    power_monitor_updated = true;
+    power_monitor_state = state;
+    pthread_cond_signal(&power_monitor_cv);
+}
+
+static void *PowerMonitorThread(void *arg)
+{
+    int sock = (int) arg;
+    set_nodelay(sock);
+
+    register_mobile_activity_callback(mobile_activity_callback);
+    
+    PthreadScopedLock lock(&power_monitor_lock);
+    while (power_monitor_running && !power_monitor_updated) {
+        pthread_cond_wait(&power_monitor_cv, &power_monitor_lock);
+        if (!power_monitor_running) {
+            break;
+        }
+
+        // the state is updated; send it along
+        int state = htonl(power_monitor_state);
+        lock.release();
+        int rc = write(sock, &state, sizeof(state));
+        if (rc != sizeof(state)) {
+            break;
+        }
+        lock.acquire();
+        power_monitor_updated = false;
+    }
+    LOGD("Power monitor thread exiting.\n");
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -657,6 +589,18 @@ int main(int argc, char *argv[])
     if (rc < 0) {
         return -1;
     }
+
+    power_monitor_sock = connect_sock((struct sockaddr *) &wifi_addr,
+                                      remote_host);
+    if (power_monitor_sock < 0) {
+        return -1;
+    }
+    pthread_t power_monitor_thread;
+    rc = pthread_create(&power_monitor_thread, NULL,
+                        PowerMonitorThread, power_monitor_sock);
+    if (rc != 0) {
+        return -1;
+    }
     
     LOGD("Waiting for first power observations...\n");
     sleep(2);
@@ -689,11 +633,6 @@ int main(int argc, char *argv[])
         LOGE("Testing failed\n");
     }
     
-    /*
-    if (receive_test_results(socks[TYPE_WIFI]) != 0) {
-        LOGE("Failed to receive remote test results\n");
-    }
-    */
     close(socks[TYPE_MOBILE]);
     close(socks[TYPE_WIFI]);
     
@@ -742,6 +681,28 @@ static int recv_test_params(int sock,
     return 0;
 }
 
+void *
+RemotePowerUpdateThread(void *arg)
+{
+    int sock = (int) arg;
+    set_nodelay(sock);
+
+    while (1) {
+        int remote_power_state;
+        int rc = read(sock, &remote_power_state, sizeof(remote_power_state));
+        if (rc != sizeof(remote_power_state)) {
+            break;
+        }
+
+        MobileState state = (MobileState) ntohl(remote_power_state);
+        report_remote_mobile_activity(state);
+    }
+    
+    close(sock);
+    LOGD("Remote power thread monitor exiting.\n");
+    return NULL;
+}
+
 int main()
 {
     int rc = setup_results_dir();
@@ -768,7 +729,7 @@ int main()
     handle_error(rc < 0, "bind");
     rc = listen(listener, 2);
     handle_error(rc < 0, "listen");
-    
+
     LOGD("Listening for connections...\n");
     try {
         while (1) {
@@ -782,12 +743,7 @@ int main()
                         break;
                     }
                 }
-                int val = 1;
-                rc = setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, 
-                                (char *) &val, sizeof(val));
-                if (rc < 0) {
-                    fprintf(stderr, "Cannot make socket TCP_NODELAY\n");
-                }
+                set_nodelay(sock);
 
                 // side effect: sets socks[received-type]
                 rc = recv_test_params(sock, 
@@ -800,23 +756,31 @@ int main()
             }
             
             if (socks[TYPE_MOBILE] != -1 && socks[TYPE_WIFI] != -1) {
-                try {
-                    if (handset_sending) {
-                        LOGD("Ready to receive 3G test data\n");
-                        receive_test_data(TYPE_MOBILE);
-                        LOGD("Ready to receive wifi test data\n");
-                        receive_test_data(TYPE_WIFI);
-                    }
-                    
-                    char ch;
-                    rc = read(socks[TYPE_WIFI], &ch, 1);
-                    if (rc == 1) {
-                        if (handset_receiving) {
-                            run_sending_tests();
+                int power_sock = accept(listener, NULL, NULL);
+                if (power_sock >= 0) {
+                    pthread_t tid;
+                    rc = pthread_create(&tid, NULL, RemotePowerUpdateThread, 
+                                        (void*)power_sock);
+                    handle_error(rc != 0, "pthread_create");
+
+                    try {
+                        if (handset_sending) {
+                            LOGD("Ready to receive 3G test data\n");
+                            receive_test_data(TYPE_MOBILE);
+                            LOGD("Ready to receive wifi test data\n");
+                            receive_test_data(TYPE_WIFI);
                         }
+                    
+                        char ch;
+                        rc = read(socks[TYPE_WIFI], &ch, 1);
+                        if (rc == 1) {
+                            if (handset_receiving) {
+                                run_sending_tests();
+                            }
+                        }
+                    } catch (TestFailureException e) {
+                        LOGE("Testing failed; closing sockets\n");
                     }
-                } catch (TestFailureException e) {
-                    LOGE("Testing failed; closing sockets\n");
                 }
             }
                 
@@ -824,11 +788,6 @@ int main()
                 close(socks[TYPE_MOBILE]);
             }
             if (socks[TYPE_WIFI] != -1) {
-                /*
-                if (send_test_results(socks[TYPE_WIFI])) {
-                    LOGE("Failed to send test results to handset\n");
-                }
-                */
                 close(socks[TYPE_WIFI]);
             }
             LOGD("Done with reciever tests.\n");
