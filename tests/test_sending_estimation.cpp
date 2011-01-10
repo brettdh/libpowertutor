@@ -478,12 +478,14 @@ static void *PowerMonitorThread(void *arg)
     int sock = (int) arg;
     set_nodelay(sock);
 
-    register_mobile_activity_callback(mobile_activity_callback);
-    
     LOGD("Power monitor thread started.\n");
     PthreadScopedLock lock(&power_monitor_lock);
-    while (power_monitor_running && !power_monitor_updated) {
-        pthread_cond_wait(&power_monitor_cv, &power_monitor_lock);
+    register_mobile_activity_callback(mobile_activity_callback);
+    
+    while (power_monitor_running) {
+        while (!power_monitor_updated) {
+            pthread_cond_wait(&power_monitor_cv, &power_monitor_lock);
+        }
         if (!power_monitor_running) {
             break;
         }
@@ -603,6 +605,7 @@ int main(int argc, char *argv[])
     rc = pthread_create(&power_monitor_thread, NULL,
                         PowerMonitorThread, (void*) power_monitor_sock);
     if (rc != 0) {
+        LOGE("Failed to create power monitor thread: %s\n", strerror(rc));
         return -1;
     }
     

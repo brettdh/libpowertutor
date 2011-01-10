@@ -587,7 +587,7 @@ update_mobile_state()
         }
 
         // check to see if a timeout expired
-        double idle_time = time_since_last_mobile_activity();
+        double idle_time = time_since_last_mobile_activity(true);
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
             if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
                 state_change = true;
@@ -624,7 +624,7 @@ update_mobile_state()
     MobileState state = mobile_state;
     lock.release();
 
-    if (mobile_activity) {
+    if (mobile_activity && activity_callback) {
         activity_callback(state);
     }
     return 0;
