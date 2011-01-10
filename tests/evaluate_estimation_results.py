@@ -174,7 +174,8 @@ class PredictionTest:
                 event["type"] = action_type
                 event["bytes"] = int(action_fields[2])
                 event["bandwidth"] = int(action_fields[4])
-                event["energy"] = int(action_fields[6])
+                event["rtt"] = int(action_fields[8])
+                event["energy"] = int(action_fields[10])
                 if action_type == PowerTrace.TYPE_WIFI:
                     energy = trace.calculate_energy(begin-3000, end+3000,
                                                     action_type)

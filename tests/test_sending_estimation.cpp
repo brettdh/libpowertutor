@@ -11,6 +11,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <assert.h>
 #include <vector>
 #include <functional>
 using std::vector; using std::min;
@@ -36,7 +37,7 @@ static const char *net_types[2] = {"mobile", "wifi"};
 
 #ifdef ANDROID
 #define RESULTS_DIR "/sdcard/libpowertutor_testing"
-#define REMOTE_RESULTS_DIR RESULTS_DIR "/remote_results"
+//#define REMOTE_RESULTS_DIR RESULTS_DIR "/remote_results"
 #else
 #define RESULTS_DIR "/tmp/libpowertutor_testing"
 #endif
@@ -51,6 +52,7 @@ static int setup_results_dir()
             return -1;
         }
     }
+/*
 #ifndef SERVER_ONLY
     if (access(REMOTE_RESULTS_DIR, F_OK) != 0) {
         if (mkdir(REMOTE_RESULTS_DIR, 0777) != 0) {
@@ -60,12 +62,12 @@ static int setup_results_dir()
         }
     }
 #endif
-    
+*/    
     struct timeval now;
     gettimeofday(&now, NULL);
     char filename[RESULTS_FILENAME_MAX_LEN];
     sprintf(filename, RESULTS_DIR "/%lu.log", now.tv_sec);
-    test_output = fopen(filename, "w+");
+    test_output = fopen(filename, "w");
     if (!test_output) {
         LOGE("Failed to open %s (%s)\n", filename, strerror(errno));
         return -1;
@@ -73,6 +75,10 @@ static int setup_results_dir()
     return 0;
 }
 
+// not needed anymore; now we send the predictions in the data stream.
+//  This way, we only rely on the timestamps on the handset when 
+//  analyzing the test results.
+/*
 #ifdef SERVER_ONLY
 #include <sys/sendfile.h>
 static int send_test_results(int sock)
@@ -173,10 +179,14 @@ static int receive_test_results(int sock)
     return 0;
 }
 #endif
+*/
 
+// datalen must be at least 5 bytes, so I can stuff the prediction and newline
 static ssize_t
-send_bytes(int sock, size_t datalen)
+send_bytes(int sock, size_t datalen, int energy_prediction)
 {
+    assert(datalen >= (sizeof(int) + 1));
+    
     //const size_t CHUNKSIZE = 4096;
     const size_t CHUNKSIZE = 4096;
     //char data[CHUNKSIZE];
@@ -187,8 +197,14 @@ send_bytes(int sock, size_t datalen)
         init = true;
     }
     
+    
     size_t bytes_sent = 0;
     while (bytes_sent < datalen) {
+        if (bytes_sent == 0) {
+            int *prediction = (int*) data;
+            *prediction = htonl(energy_prediction);
+        }
+        
         size_t bytes_now = min(CHUNKSIZE, datalen - bytes_sent);
         char saved = data[bytes_now - 1];
         if (bytes_now == (datalen - bytes_sent)) {
@@ -199,6 +215,10 @@ send_bytes(int sock, size_t datalen)
         if (rc != (ssize_t)bytes_now) {
             LOGE("send_bytes: write: %s\n", strerror(errno));
             return -1;
+        }
+        
+        if (bytes_sent == 0) {
+            memset(data, 'F', sizeof(int));
         }
         bytes_sent += bytes_now;
     }
@@ -214,16 +234,18 @@ do_and_print_result(NetworkType type, size_t datalen)
     gettimeofday(&now, NULL);
     int energy = estimate_energy_cost(type, datalen, 
                                       bandwidth_up[type], rtt_ms[type]);
-    LOGD("%lu.%06lu  %s %zu bytes, bw_up %zu bytes/sec, rtt %d ms, %d mJ\n",
+    LOGD("%lu.%06lu  %s %zu bytes, bw_up %zu bytes/sec up, rtt %d ms, %d mJ\n",
          now.tv_sec, now.tv_usec,
          net_types[type], datalen, bandwidth_up[type], rtt_ms[type], energy);
-    fprintf(test_output, "%lu.%06lu  %s %zu bytes, %zu bytes/sec, %d mJ\n",
+    fprintf(test_output, "%lu.%06lu  %s %zu bytes, %zu "
+            "bytes/sec up, rtt %d ms, %d mJ\n",
             now.tv_sec, now.tv_usec,
-            net_types[type], datalen, bandwidth_up[type], energy);
+            net_types[type], datalen, 
+            bandwidth_up[type], rtt_ms[type], energy);
 
-    // actually send the data on the right interface'
+    // actually send the data on the right interface
     //  so that PowerTutor can observe the energy consumption
-    ssize_t rc = send_bytes(socks[type], datalen);
+    ssize_t rc = send_bytes(socks[type], datalen, energy);
     gettimeofday(&now, NULL);
     if (rc != (ssize_t) datalen) {
         LOGE("%lu.%06lu  Failed to send %zu bytes (%s)\n", 
@@ -338,15 +360,34 @@ static void run_sending_tests()
     finish_test(socks[TYPE_WIFI]);
 }
 
-static void receive_test_data(int sock)
+static void receive_test_data(NetworkType type)
 {
+    int sock = socks[type];
+    
     const size_t chunksize = 1024*1024;
     char *data = new char[chunksize];
     memset(data, 0, chunksize);
     size_t data_recvd = 0;
     
     while (1) {
-        int rc;
+        int energy_prediction = 0;
+        
+        // use select here to detect the arrival of bytes,
+        //  which should be pretty close to the time that the
+        //  wireless interface becomes active.
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
+        int rc = select(sock + 1, &readfds, NULL, NULL, NULL);
+        if (rc < 0) {
+            perror("select");
+            break;
+        }
+        struct timeval begin, now;
+        gettimeofday(&begin, NULL);
+        LOGD("%lu.%06lu  %s started receiving bytes\n", 
+             begin.tv_sec, begin.tv_usec, net_types[type]);
+        
         while (data_recvd == 0 || data[data_recvd - 1] != '\x0A') {
             data_recvd = 0;
             rc = read(sock, data, chunksize);
@@ -356,15 +397,34 @@ static void receive_test_data(int sock)
                 }
                 break;
             }
+            if (data_recvd == 0) {
+                // first 4 bytes is the energy prediction
+                int *pred = (int *) data;
+                energy_prediction = ntohl(*pred);
+            }
             data_recvd += rc;
         }
         if (data_recvd == 0) {
             delete [] data;
             throw TestFailureException();
         }
-        data_recvd = 0;
+        gettimeofday(&now, NULL);
+        LOGD("%lu.%06lu  %s done; %zu bytes, %zu bytes/sec down, "
+             "rtt %d ms, %d mJ\n",
+             now.tv_sec, now.tv_usec, net_types[type], data_recvd, 
+             bandwidth_down[type], rtt_ms[type], energy_prediction);
+             
+        fprintf(test_output, "%lu.%06lu  %s %zu bytes, "
+                "%zu bytes/sec down, rtt %d ms, %d mJ\n"
+                "%lu.%06lu  %s done\n",
+                begin.tv_sec, begin.tv_usec,
+                net_types[type], data_recvd, 
+                bandwidth_down[type], rtt_ms[type], energy_prediction,
+                now.tv_sec, now.tv_usec, net_types[type]);
         
-        LOGD("Test line received; sending ack\n");
+        data_recvd = 0;
+        energy_prediction = 0;
+                
         // received whole 'line'; send ack
         char ack = 'Q';
         rc = write(sock, &ack, 1);
@@ -589,10 +649,19 @@ int main(int argc, char *argv[])
         rc = write(socks[TYPE_WIFI], &ch, 1);
         if (rc == 1) {
             if (receiver) {
+                struct timeval now;
+                gettimeofday(&now, NULL);
+                fprintf(test_output, "%lu.%06lu Starting receiver tests\n",
+                        now.tv_sec, now.tv_usec);
+                        
                 LOGD("Recieving 3G test data\n");
-                receive_test_data(socks[TYPE_MOBILE]);
+                receive_test_data(TYPE_MOBILE);
                 LOGD("Recieving wifi test data\n");
-                receive_test_data(socks[TYPE_WIFI]);
+                receive_test_data(TYPE_WIFI);
+                
+                gettimeofday(&now, NULL);
+                fprintf(test_output, "%lu.%06lu Finished receiver tests\n",
+                        now.tv_sec, now.tv_usec);
             }
         }
         LOGD("Testing finished.\n");
@@ -600,11 +669,15 @@ int main(int argc, char *argv[])
         LOGE("Testing failed\n");
     }
     
+    /*
     if (receive_test_results(socks[TYPE_WIFI]) != 0) {
         LOGE("Failed to receive remote test results\n");
     }
+    */
     close(socks[TYPE_MOBILE]);
     close(socks[TYPE_WIFI]);
+    
+    fclose(test_output);
     
     return 0;
 }
@@ -721,9 +794,9 @@ int main()
                 try {
                     if (handset_sending) {
                         LOGD("Receiving 3G test data\n");
-                        receive_test_data(socks[TYPE_MOBILE]);
+                        receive_test_data(TYPE_MOBILE);
                         LOGD("Receiving wifi test data\n");
-                        receive_test_data(socks[TYPE_WIFI]);
+                        receive_test_data(TYPE_WIFI);
                     }
                     
                     char ch;
@@ -742,9 +815,11 @@ int main()
                 close(socks[TYPE_MOBILE]);
             }
             if (socks[TYPE_WIFI] != -1) {
+                /*
                 if (send_test_results(socks[TYPE_WIFI])) {
                     LOGE("Failed to send test results to handset\n");
                 }
+                */
                 close(socks[TYPE_WIFI]);
             }
             LOGD("Done with reciever tests.\n");
