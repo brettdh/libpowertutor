@@ -17,6 +17,7 @@
 #include <functional>
 using std::vector; using std::min;
 #include "../libpowertutor.h"
+#include "../pthread_util.h"
 
 static const short TEST_PORT = 4242;
 
@@ -459,12 +460,12 @@ static int send_test_params(NetworkType type, bool sender, bool receiver)
 }
 
 static pthread_mutex_t power_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t power_monitor_cv = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t power_monitor_cv = PTHREAD_COND_INITIALIZER;
 static bool power_monitor_running = true;
 static bool power_monitor_updated = false;
 static MobileState power_monitor_state = MOBILE_POWER_STATE_IDLE;
 
-static mobile_activity_callback(MobileState state)
+static void mobile_activity_callback(MobileState state)
 {
     PthreadScopedLock lock(&power_monitor_lock);
     power_monitor_updated = true;
@@ -493,7 +494,7 @@ static void *PowerMonitorThread(void *arg)
         if (rc != sizeof(state)) {
             break;
         }
-        lock.acquire();
+        lock.acquire(&power_monitor_lock);
         power_monitor_updated = false;
     }
     LOGD("Power monitor thread exiting.\n");
@@ -590,14 +591,14 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    power_monitor_sock = connect_sock((struct sockaddr *) &wifi_addr,
-                                      remote_host);
+    int power_monitor_sock = connect_sock((struct sockaddr *) &wifi_addr,
+                                          remote_host);
     if (power_monitor_sock < 0) {
         return -1;
     }
     pthread_t power_monitor_thread;
     rc = pthread_create(&power_monitor_thread, NULL,
-                        PowerMonitorThread, power_monitor_sock);
+                        PowerMonitorThread, (void*) power_monitor_sock);
     if (rc != 0) {
         return -1;
     }
@@ -637,6 +638,16 @@ int main(int argc, char *argv[])
     close(socks[TYPE_WIFI]);
     
     fclose(test_output);
+    
+    {
+        PthreadScopedLock lock(&power_monitor_lock);
+        power_monitor_running = false;
+        shutdown(power_monitor_sock, SHUT_RDWR);
+        
+        pthread_cond_signal(&power_monitor_cv);
+    }
+    pthread_join(power_monitor_thread, NULL);
+    close(power_monitor_sock);
     
     return 0;
 }

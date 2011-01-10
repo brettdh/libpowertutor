@@ -621,7 +621,7 @@ update_mobile_state()
 
     // need copies to avoid holding lock while running callback.
     void (*activity_callback)(MobileState) = mobile_activity_callback;
-    MobileState new_state = mobile_state;
+    MobileState state = mobile_state;
     lock.release();
 
     if (mobile_activity) {
@@ -631,6 +631,7 @@ update_mobile_state()
 }
 #endif // ANDROID
 
+#ifndef ANDROID
 static void
 update_remote_power_model()
 {
@@ -659,6 +660,7 @@ update_remote_power_model()
              mobile_state_str[remote_mobile_state]);
     }
 }
+#endif
 
 #ifdef BUILDING_SHLIB
 static pthread_t update_thread;
