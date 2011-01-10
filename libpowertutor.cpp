@@ -711,32 +711,24 @@ NetworkStatsUpdateThread(void *)
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
-    if (power_model_is_remote()) {
-        // TODO: start thread for receiving updates from remote handset
-    } else {
-        LOGD("Starting update thread\n");
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        int rc = pthread_create(&update_thread, &attr, 
-                                NetworkStatsUpdateThread, NULL);
-        if (rc != 0) {
-            LOGE("Warning: failed to create update thread!\n");
-        }
+    LOGD("Starting update thread\n");
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    int rc = pthread_create(&update_thread, &attr, 
+                            NetworkStatsUpdateThread, NULL);
+    if (rc != 0) {
+        LOGE("Warning: failed to create update thread!\n");
     }
 }
 
 static void libpowertutor_fin() __attribute__((destructor));
 static void libpowertutor_fin()
 {
-    if (power_model_is_remote()) {
-        // TODO: stop update-receiver thread
-    } else {
-        LOGD("In libpowertutor_fin\n");
-        PthreadScopedLock lock(&update_thread_lock);
-        running = false;
-        pthread_cond_signal(&update_thread_cv);
-    }
+    LOGD("In libpowertutor_fin\n");
+    PthreadScopedLock lock(&update_thread_lock);
+    running = false;
+    pthread_cond_signal(&update_thread_cv);
 }
 #endif // BUILDING_SHLIB
 
