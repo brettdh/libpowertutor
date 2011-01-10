@@ -369,8 +369,6 @@ static void receive_test_data(NetworkType type)
     size_t data_recvd = 0;
     
     while (1) {
-        int energy_prediction = 0;
-        
         // use select here to detect the arrival of bytes,
         //  which should be pretty close to the time that the
         //  wireless interface becomes active.
@@ -387,6 +385,9 @@ static void receive_test_data(NetworkType type)
         LOGD("%lu.%06lu  %s started receiving bytes\n", 
              begin.tv_sec, begin.tv_usec, net_types[type]);
         
+        size_t total_bytes = 0;
+        int energy_prediction = 0;
+
         while (data_recvd == 0 || data[data_recvd - 1] != '\x0A') {
             data_recvd = 0;
             rc = read(sock, data, chunksize);
@@ -396,7 +397,7 @@ static void receive_test_data(NetworkType type)
                 }
                 break;
             }
-            if (data_recvd == 0) {
+            if (total_bytes == 0) {
                 // first 4 bytes is the energy prediction
                 int *pred = (int *) data;
                 energy_prediction = ntohl(*pred);
@@ -406,6 +407,7 @@ static void receive_test_data(NetworkType type)
                 memset(data, 'F', sizeof(int));
             }
             data_recvd += rc;
+            total_bytes += rc;
         }
         if (data_recvd == 0) {
             delete [] data;
@@ -414,20 +416,17 @@ static void receive_test_data(NetworkType type)
         gettimeofday(&now, NULL);
         LOGD("%lu.%06lu  %s done; %zu bytes, %zu bytes/sec down, "
              "rtt %d ms, %d mJ\n",
-             now.tv_sec, now.tv_usec, net_types[type], data_recvd, 
+             now.tv_sec, now.tv_usec, net_types[type], total_bytes, 
              bandwidth_down[type], rtt_ms[type], energy_prediction);
              
         fprintf(test_output, "%lu.%06lu  %s %zu bytes, "
                 "%zu bytes/sec down, rtt %d ms, %d mJ\n"
                 "%lu.%06lu  %s done\n",
                 begin.tv_sec, begin.tv_usec,
-                net_types[type], data_recvd, 
+                net_types[type], total_bytes, 
                 bandwidth_down[type], rtt_ms[type], energy_prediction,
                 now.tv_sec, now.tv_usec, net_types[type]);
         
-        data_recvd = 0;
-        energy_prediction = 0;
-                
         // received whole 'line'; send ack
         char ack = 'Q';
         rc = write(sock, &ack, 1);
