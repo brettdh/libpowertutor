@@ -74,6 +74,7 @@ static int setup_results_dir()
 }
 
 #ifdef SERVER_ONLY
+#include <sys/sendfile.h>
 static int send_test_results(int sock)
 {
     LOGD("Sending test results back to handset\n");
@@ -90,7 +91,7 @@ static int send_test_results(int sock)
     }
     len = htonl(len);
     int rc = write(sock, &len, sizeof(len));
-    if (rc != len) {
+    if (rc != sizeof(len)) {
         LOGE("Failed to send test result file size: %s\n", strerror(errno));
         return -1;
     }
@@ -741,6 +742,9 @@ int main()
                 close(socks[TYPE_MOBILE]);
             }
             if (socks[TYPE_WIFI] != -1) {
+                if (send_test_results(socks[TYPE_WIFI])) {
+                    LOGE("Failed to send test results to handset\n");
+                }
                 close(socks[TYPE_WIFI]);
             }
             LOGD("Done with reciever tests.\n");
