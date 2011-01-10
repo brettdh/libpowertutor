@@ -366,7 +366,6 @@ static void receive_test_data(NetworkType type)
     const size_t chunksize = 1024*1024;
     char *data = new char[chunksize];
     memset(data, 0, chunksize);
-    size_t data_recvd = 0;
     
     while (1) {
         // use select here to detect the arrival of bytes,
@@ -385,11 +384,12 @@ static void receive_test_data(NetworkType type)
         LOGD("%lu.%06lu  %s started receiving bytes\n", 
              begin.tv_sec, begin.tv_usec, net_types[type]);
         
+        size_t bytes_now = 0;
         size_t total_bytes = 0;
         int energy_prediction = 0;
-
-        while (data_recvd == 0 || data[data_recvd - 1] != '\x0A') {
-            data_recvd = 0;
+        
+        while (bytes_now == 0 || data[bytes_now - 1] != '\x0A') {
+            bytes_now = 0;
             rc = read(sock, data, chunksize);
             if (rc <= 0) {
                 if (rc < 0) {
@@ -406,10 +406,10 @@ static void receive_test_data(NetworkType type)
                 //  interpret any of the bytes as newlines
                 memset(data, 'F', sizeof(int));
             }
-            data_recvd += rc;
-            total_bytes += rc;
+            bytes_now = rc;
+            total_bytes += bytes_now;
         }
-        if (data_recvd == 0) {
+        if (bytes_now == 0) {
             delete [] data;
             throw TestFailureException();
         }
@@ -529,6 +529,8 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
 
 static int send_test_params(NetworkType type, bool sender, bool receiver)
 {
+    LOGD("Sending %s test params to server\n", net_types[type]);
+    
     struct test_params params;
     params.type = htons(type);
     params.bandwidth_down = htonl(bandwidth_down[type]); // remote's upstream
@@ -550,6 +552,7 @@ static int send_test_params(NetworkType type, bool sender, bool receiver)
         LOGE("Failed to read ack of test params\n");
         return -1;
     }
+    LOGD("Successfully sent %s test params\n", net_types[type]);
     
     return 0;
 }
@@ -614,10 +617,18 @@ int main(int argc, char *argv[])
     if (socks[TYPE_MOBILE] < 0) {
         return -1;
     }
+    rc = send_test_params(TYPE_MOBILE, sender, receiver);
+    if (rc < 0) {
+        return -1;
+    }
 
     socks[TYPE_WIFI] = connect_sock((struct sockaddr *) &wifi_addr,
                                     remote_host);
     if (socks[TYPE_WIFI] < 0) {
+        return -1;
+    }
+    rc = send_test_params(TYPE_WIFI, sender, receiver);
+    if (rc < 0) {
         return -1;
     }
     
@@ -634,12 +645,6 @@ int main(int argc, char *argv[])
             LOGD("Ack!  I don't have an iface with IP %s\n", 
                  inet_ntoa(ifaces[i].ip_addr));
         }
-    }
-    
-    rc = send_test_params(TYPE_MOBILE, sender, receiver);
-    rc += send_test_params(TYPE_WIFI, sender, receiver);
-    if (rc < 0) {
-        return -1;
     }
     
     LOGD("Waiting for first power observations...\n");
@@ -798,9 +803,9 @@ int main()
             if (socks[TYPE_MOBILE] != -1 && socks[TYPE_WIFI] != -1) {
                 try {
                     if (handset_sending) {
-                        LOGD("Receiving 3G test data\n");
+                        LOGD("Ready to receive 3G test data\n");
                         receive_test_data(TYPE_MOBILE);
-                        LOGD("Receiving wifi test data\n");
+                        LOGD("Ready to receive wifi test data\n");
                         receive_test_data(TYPE_WIFI);
                     }
                     
