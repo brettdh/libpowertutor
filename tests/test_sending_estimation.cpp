@@ -29,9 +29,7 @@ static const short TEST_PORT = 4242;
 
 static int socks[2] = {-1, -1};
 static int bandwidth_up[2] = {0, 0};
-#ifndef SERVER_ONLY
 static int bandwidth_down[2] = {0, 0};
-#endif
 static int rtt_ms[2] = {0, 0};
 static const char *net_types[2] = {"mobile", "wifi"};
 
@@ -444,7 +442,8 @@ static void receive_test_data(NetworkType type)
 
 struct test_params {
     int type; // TYPE_MOBILE or TYPE_WIFI
-    int bandwidth;
+    int bandwidth_down; // handset's downstream; remote's upstream
+    int bandwidth_up;   // handset's upstream; remote's downstream
     int rtt_ms;
     short handset_sending;
     short handset_receiving;
@@ -528,7 +527,8 @@ static int send_test_params(NetworkType type, bool sender, bool receiver)
 {
     struct test_params params;
     params.type = htons(type);
-    params.bandwidth = htonl(bandwidth_down[type]); // remote's upstream
+    params.bandwidth_down = htonl(bandwidth_down[type]); // remote's upstream
+    params.bandwidth_up = htonl(bandwidth_up[type]); // remote's downstream
     params.rtt_ms = htonl(rtt_ms[type]);
     params.handset_sending = (sender ? 0xffff : 0);
     params.handset_receiving = (receiver ? 0xffff : 0);
@@ -706,7 +706,8 @@ static int recv_test_params(int sock,
         return -1;
     }
     socks[type] = sock;
-    bandwidth_up[type] = ntohl(params.bandwidth);
+    bandwidth_up[type] = ntohl(params.bandwidth_down); // handset's upstream
+    bandwidth_down[type] = ntohl(params.bandwidth_up); // handset's downstream
     rtt_ms[type] = ntohl(params.rtt_ms);
     *handset_sending = params.handset_sending;
     *handset_receiving = params.handset_receiving;
