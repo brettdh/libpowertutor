@@ -39,8 +39,6 @@ using std::min; using std::max;
 // [1] Zhang et al. "Accurate Online Power Estimation and Automatic Battery
 // Behavior Based Power Model Generation for Smartphones," CODES+ISSS '10.
 
-// TODO: remove after implementing remote power model estimation.
-#ifdef ANDROID
 static const int TCP_HDR_SIZE = 32;
 static const int IP_HDR_SIZE = 20;
 
@@ -252,8 +250,6 @@ time_since_last_mobile_activity(bool already_locked=false)
     }
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
-#endif // ANDROID
-// TODO: remove after implementing remote power model estimation.
 
 static bool
 power_model_is_remote()
@@ -273,8 +269,6 @@ power_model_is_remote()
 #endif
 }
 
-// TODO: remove after implementing remote power model estimation.
-#ifdef ANDROID
 int update_mobile_state();
 
 static int 
@@ -404,6 +398,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
 int
 wifi_channel_rate()
 {
+#ifdef ANDROID
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
@@ -433,6 +428,10 @@ wifi_channel_rate()
     
     sscanf(reply, "%*s %u", &linkspeed);
     return linkspeed;
+#else
+    // TOD: IMPL (get from remote)
+    return 54;
+#endif
 }
 
 pthread_mutex_t wifi_state_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -672,26 +671,34 @@ NetworkStatsUpdateThread(void *)
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
-    LOGD("In libpowertutor_init\n");
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    int rc = pthread_create(&update_thread, &attr, 
-                            NetworkStatsUpdateThread, NULL);
-    if (rc != 0) {
-        LOGE("Warning: failed to create update thread!\n");
+    if (power_model_is_remote()) {
+        // TODO: start thread for receiving updates from remote handset
+    } else {
+        LOGD("Starting update thread\n");
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        int rc = pthread_create(&update_thread, &attr, 
+                                NetworkStatsUpdateThread, NULL);
+        if (rc != 0) {
+            LOGE("Warning: failed to create update thread!\n");
+        }
     }
 }
 
 static void libpowertutor_fin() __attribute__((destructor));
 static void libpowertutor_fin()
 {
-    LOGD("In libpowertutor_fin\n");
-    PthreadScopedLock lock(&update_thread_lock);
-    running = false;
-    pthread_cond_signal(&update_thread_cv);
+    if (power_model_is_remote()) {
+        // TODO: stop update-receiver thread
+    } else {
+        LOGD("In libpowertutor_fin\n");
+        PthreadScopedLock lock(&update_thread_lock);
+        running = false;
+        pthread_cond_signal(&update_thread_cv);
+    }
 }
-#endif
+#endif // BUILDING_SHLIB
 
 int
 wifi_uplink_data_rate()
@@ -792,8 +799,6 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
     //    multiplying by power.
     return ceil((((double)datalen) / bandwidth) + (rtt_ms / 1000.0)) * power;
 }
-#endif // ANDROID
-// TODO: remove after implementing remote power model estimation.
 
 // XXX: It may be useful/necessary to factor into these calculations how
 // XXX:  energy cost is amortized over several transmissions.
