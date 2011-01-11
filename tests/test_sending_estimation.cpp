@@ -737,7 +737,7 @@ RemotePowerUpdateThread(void *arg)
         LOGD("Got update about %s-state activity: "
              "queue[d,u] = {%d, %d}, wifi pkt rate = %d\n",
              mobile_state_str[state.mobile_state],
-             state.mobile_queue_len[DOWN], state.mobile_queue_len[DOWN],
+             state.mobile_queue_len[DOWN], state.mobile_queue_len[UP],
              state.wifi_packet_rate);
         report_remote_mobile_activity(state);
     }
