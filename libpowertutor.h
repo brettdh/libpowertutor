@@ -74,7 +74,8 @@ void register_mobile_activity_callback(activity_callback_t callback);
 /* TODO: the ip_addr argument will be used later to maintain power models
  * for multiple remote handsets.
  */
-void report_remote_mobile_activity(/* struct in_addr ip_addr, */ MobileState state);
+void report_remote_mobile_activity(/* struct in_addr ip_addr, */
+                                   struct remote_power_state state);
 
 #ifdef __cplusplus
 }

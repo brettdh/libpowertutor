@@ -694,7 +694,7 @@ update_remote_power_model()
     //   we assume that nothing has happened; the queues have emptied
     //   and the packet rate has dropped off.
     const double REMOTE_POWER_STATE_INVALID_TIMEOUT = 1.5;
-    if (idle_time >= REMOTE_POWER_STATE_INVALIDATE_TIMEOUT) {
+    if (idle_time >= REMOTE_POWER_STATE_INVALID_TIMEOUT) {
         remote_state.mobile_queue_len[DOWN] = 0;
         remote_state.mobile_queue_len[UP] = 0;
         remote_state.wifi_packet_rate = 0;

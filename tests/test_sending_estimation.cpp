@@ -35,6 +35,9 @@ static int bandwidth_down[2] = {0, 0};
 static int rtt_ms[2] = {0, 0};
 static const char *net_types[2] = {"mobile", "wifi"};
 
+// queue direction. for remote-power-model stuff.
+enum dir { DOWN=0, UP };
+
 #ifdef ANDROID
 #define RESULTS_DIR "/sdcard/libpowertutor_testing"
 //#define REMOTE_RESULTS_DIR RESULTS_DIR "/remote_results"
@@ -464,7 +467,6 @@ static pthread_cond_t power_monitor_cv = PTHREAD_COND_INITIALIZER;
 static bool power_monitor_running = true;
 static bool power_monitor_updated = false;
 
-enum dir { DOWN=0, UP };
 // this is only used to pass data to the power monitor thread
 //  to be sent to the server side.  It is not used in power calculations
 //  on the handset.
@@ -728,9 +730,9 @@ RemotePowerUpdateThread(void *arg)
         }
 
         state.mobile_state = ntohl(state.mobile_state);
-        state.state.mobile_queue_len[DOWN] 
+        state.mobile_queue_len[DOWN] 
             = ntohl(state.mobile_queue_len[DOWN]);
-        state.state.mobile_queue_len[UP] = ntohl(state.mobile_queue_len[UP]);
+        state.mobile_queue_len[UP] = ntohl(state.mobile_queue_len[UP]);
         state.wifi_packet_rate = ntohl(state.wifi_packet_rate);
         LOGD("Got update about %s-state activity: "
              "queue[d,u] = {%d, %d}, wifi pkt rate = %d\n",
