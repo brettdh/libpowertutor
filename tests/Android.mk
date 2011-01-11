@@ -3,7 +3,7 @@ LOCAL_PATH := $(call my-dir)
 common_C_INCLUDES := external/bdh_apps/cppunit/include \
                      external/bdh_apps/libcmm
 #                    external/openssl/include
-common_CFLAGS:=-g -O0 -Wall -Werror
+common_CFLAGS:=-g -O0 -Wall -Werror -DANDROID
 common_STATIC_LIBRARIES:=libcppunit #libboost_thread
 TESTSUITE_SRCS := run_all_tests.cpp test_common.cpp
 

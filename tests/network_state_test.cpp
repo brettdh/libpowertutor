@@ -11,7 +11,7 @@ extern int get_mobile_queue_len(int *down, int *up);
 extern int wifi_channel_rate();
 extern int wifi_packet_rate();
 extern int wifi_uplink_data_rate();
-extern int update_wifi_estimated_rates();
+extern int update_wifi_estimated_rates(bool&);
 
 void 
 NetworkStateTest::setUp()
@@ -47,8 +47,9 @@ NetworkStateTest::testQueueSize()
 void 
 NetworkStateTest::testWifiParams()
 {
+    bool dummy;
     for (int i = -1; i < 5; ++i) {
-        int rc = update_wifi_estimated_rates();
+        int rc = update_wifi_estimated_rates(dummy);
         CPPUNIT_ASSERT_MESSAGE("Updating wifi state succeeded", rc == 0);
         if (i >= 0) {
             int packet_rate = wifi_packet_rate();

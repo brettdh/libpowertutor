@@ -43,7 +43,7 @@ static const int TCP_HDR_SIZE = 32;
 static const int IP_HDR_SIZE = 20;
 
 // all power vals in mW
-static const int WIFI_TRANSMIT_POWER = 1000;
+//static const int WIFI_TRANSMIT_POWER = 1000;
 static const int WIFI_HIGH_POWER_BASE = 710;
 static const int WIFI_LOW_POWER = 20;
 
@@ -82,6 +82,9 @@ get_dch_threshold(bool downlink)
 static const double MOBILE_FACH_INACTIVITY_TIMER = 6.0;
 static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
 
+// threshold for transitioning to wifi high-power state
+static const int WIFI_PACKET_RATE_THRESHOLD = 15; // packets/sec
+
 /* Information needed to make calculations (based on power state inference):
  * 1) Uplink/downlink queue size
  *    - Look in /proc/net/{tcp,udp,raw} and add up tx_queue and rx_queue
@@ -119,14 +122,25 @@ static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
 
 #ifdef ANDROID
-static void (*mobile_activity_callback)(MobileState) = NULL;
+static activity_callback_t mobile_activity_callback = NULL;
+
+#  ifdef BUILDING_SHLIB
+static activity_callback_t
+get_activity_callback(void)
+{
+    PthreadScopedLock lock(&mobile_state_lock);
+    return mobile_activity_callback;
+}
+#  endif
 #endif
 
 // remote power model state: only what's needed for decent accuracy
 static pthread_mutex_t remote_power_state_lock = PTHREAD_MUTEX_INITIALIZER;
 // TODO: support multiple remotes.
 static struct timeval remote_last_mobile_activity = {0, 0};
-static MobileState remote_mobile_state = MOBILE_POWER_STATE_IDLE;
+static struct remote_power_state remote_state = {
+    MOBILE_POWER_STATE_IDLE, {0, 0}, 0
+};
 
 
 static bool
@@ -152,7 +166,7 @@ get_mobile_state()
 {
     if (power_model_is_remote()) {
         PthreadScopedLock lock(&remote_power_state_lock);
-        return remote_mobile_state;
+        return (MobileState) remote_state.mobile_state;
     } else {
         PthreadScopedLock lock(&mobile_state_lock);
         return mobile_state;
@@ -165,17 +179,17 @@ void
 get_mobile_queue_len(int *down_queue, int *up_queue)
 {
     if (power_model_is_remote()) {
-        // TODO: share this data too?
-        // TODO: or guess at it?
+        PthreadScopedLock lock(&remote_power_state_lock);
         if (down_queue) {
-            *down_queue = 0;
+            *down_queue = remote_state.mobile_queue_len[DOWN];
         }
         if (up_queue) {
-            *up_queue = 0;
+            *up_queue = remote_state.mobile_queue_len[UP];
         }
         return;
     }
 
+    // here, we know we're on the handset.
     size_t up_bytes = 0, down_bytes = 0;
 
     //  Two ways to do this:
@@ -276,7 +290,15 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
     int queue_len = 0, ack_dir_queue_len = 0;
-    get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
+    if (downlink) {
+        // the handset's downlink queue is the queue we're sending into.
+        //  it will send acks into its uplink queue.
+        get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
+    } else {
+        // the handset is sending into its uplink queue.
+        //  acks will arrive in its downlink queue.
+        get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
+    }
     
     int threshold = get_dch_threshold(downlink);
     LOGD("DCH threshold %d -- queue length %d (%d predicted)\n",
@@ -372,6 +394,8 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
 
 #include "wifi.h"
 
+const int MAX_80211G_CHANNEL_RATE = 54;
+
 int
 wifi_channel_rate()
 {
@@ -388,7 +412,7 @@ wifi_channel_rate()
     int rc = wifi_connect_to_supplicant();
     if (rc < 0) {
         LOGE("Failed to connect to supplicant\n");
-        return rc;
+        return -1;
     }
     if (wifi_command("DRIVER LINKSPEED", reply, &reply_len) != 0) {
         LOGE("DRIVER LINKSPEED command failed\n");
@@ -407,7 +431,7 @@ wifi_channel_rate()
     return linkspeed;
 #else
     // TOD: IMPL (get from remote)
-    return 54;
+    return MAX_80211G_CHANNEL_RATE;
 #endif
 }
 
@@ -487,7 +511,7 @@ get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
 
 #ifdef ANDROID
 int
-update_wifi_estimated_rates()
+update_wifi_estimated_rates(bool& fire_callback)
 {
     struct timeval now, diff;
     int bytes[2] = {0,0}, packets[2] = {0,0};
@@ -523,11 +547,15 @@ update_wifi_estimated_rates()
     store_counts(wifi_last_packets, packets);
     last_wifi_observation = now;
     
+    if ((wifi_packet_rates[DOWN] + wifi_packet_rates[UP]) > 0) {
+        fire_callback = true;
+    }
+    
     return 0;
 }
 
 int
-update_mobile_state()
+update_mobile_state(bool& fire_callback)
 {
     int bytes[2] = {0,0}, dummy[2] = {0,0};
     int rc = get_net_dev_stats("rmnet0", bytes, dummy);
@@ -629,13 +657,8 @@ update_mobile_state()
              mobile_state_str[mobile_state]);
     }
 
-    // need copies to avoid holding lock while running callback.
-    void (*activity_callback)(MobileState) = mobile_activity_callback;
-    MobileState state = mobile_state;
-    lock.release();
-
-    if (mobile_activity && activity_callback) {
-        activity_callback(state);
+    if (mobile_activity) {
+        fire_callback = true;
     }
     return 0;
 }
@@ -649,28 +672,42 @@ update_remote_power_model()
 
     PthreadScopedLock lock(&remote_power_state_lock);
     double idle_time = time_since(remote_last_mobile_activity);
-    if (remote_mobile_state == MOBILE_POWER_STATE_DCH) {
+    if (remote_state.mobile_state == MOBILE_POWER_STATE_DCH) {
         if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
             state_change = true;
-            remote_mobile_state = MOBILE_POWER_STATE_FACH;
+            remote_state.mobile_state = MOBILE_POWER_STATE_FACH;
             
             // mark this state change as an "activity,"
             //   so that we wait for the full FACH timeout
             //   before going to IDLE.
             gettimeofday(&remote_last_mobile_activity, NULL);
         }
-    } else if (remote_mobile_state == MOBILE_POWER_STATE_FACH) {
+    } else if (remote_state.mobile_state == MOBILE_POWER_STATE_FACH) {
         if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
             state_change = true;
-            remote_mobile_state = MOBILE_POWER_STATE_IDLE;
+            remote_state.mobile_state = MOBILE_POWER_STATE_IDLE;
         }
     }
+    
+    // the handset's 1-second polling rate, plus a fudge factor to
+    //   cover the rtt.  If we don't hear an update for this long,
+    //   we assume that nothing has happened; the queues have emptied
+    //   and the packet rate has dropped off.
+    const double REMOTE_POWER_STATE_INVALID_TIMEOUT = 1.5;
+    if (idle_time >= REMOTE_POWER_STATE_INVALIDATE_TIMEOUT) {
+        remote_state.mobile_queue_len[DOWN] = 0;
+        remote_state.mobile_queue_len[UP] = 0;
+        remote_state.wifi_packet_rate = 0;
+    }
+    
     if (state_change) {
         LOGD("Remote mobile state changed to %s\n",
-             mobile_state_str[remote_mobile_state]);
+             mobile_state_str[remote_state.mobile_state]);
     }
 }
 #endif
+
+int wifi_packet_rate();
 
 #ifdef BUILDING_SHLIB
 static pthread_t update_thread;
@@ -687,13 +724,27 @@ NetworkStatsUpdateThread(void *)
     PthreadScopedLock lock(&update_thread_lock);
     while (running) {
 #ifdef ANDROID
-        int rc = update_wifi_estimated_rates();
+        bool fire_callback = false;
+        int rc = update_wifi_estimated_rates(fire_callback);
         if (rc < 0) {
             LOGE("Warning: failed to update wifi stats\n");
         }
-        rc = update_mobile_state();
+        rc = update_mobile_state(fire_callback);
         if (rc < 0) {
             LOGE("Warning: failed to update mobile state\n");
+        }
+        
+        if (fire_callback) {
+            activity_callback_t callback = get_activity_callback();
+            if (callback) {
+                struct remote_power_state state;
+                state.mobile_state = get_mobile_state();
+                get_mobile_queue_len(&state.mobile_queue_len[DOWN],
+                                     &state.mobile_queue_len[UP]);
+                state.wifi_packet_rate = wifi_packet_rate();
+                
+                callback(state);
+            }
         }
 #else
         // TODO: This could work on Android, too (handset-to-handset)
@@ -746,7 +797,8 @@ wifi_packet_rate()
         // keeping track of these stats from the handset
         //  only marginally improves accuracy.
         // I might add them later. (TODO?)
-        return 0;
+        PthreadScopedLock lock(&remote_power_state_lock);
+        return remote_state.wifi_packet_rate;
     } else {
         PthreadScopedLock lock(&wifi_state_lock);
         return wifi_packet_rates[DOWN] + wifi_packet_rates[UP];
@@ -766,6 +818,10 @@ wifi_channel_rate_component()
         // XXX: wifi_channel_rate only succeeds if we have root perms.
         // TODO: make this work for non-root apps calling this function.
         int channel_rate = wifi_channel_rate();
+        if (channel_rate == -1) {
+            LOGE("Warning: failed to get channel rate; using default\n");
+            channel_rate = MAX_80211G_CHANNEL_RATE;
+        }
         double uplink_data_rate = int(wifi_uplink_data_rate() * 8.0 / 1000000.0);
         int channel_rate_component = (48 - 0.768 * channel_rate)*uplink_data_rate;
         LOGD("channel rate %d uplink data rate %f chrate component %d\n",
@@ -796,7 +852,7 @@ wifi_high_state(size_t datalen)
     cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
     int packet_rate = wifi_packet_rate();
     LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
-    return (cur_packets + packet_rate) > 15;
+    return (cur_packets + packet_rate) > WIFI_PACKET_RATE_THRESHOLD;
 }
 
 static int 
@@ -853,7 +909,7 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
 
 
 // only on handsets.
-void register_mobile_activity_callback(void (*callback)(MobileState))
+void register_mobile_activity_callback(activity_callback_t callback)
 {
 #ifdef ANDROID
     PthreadScopedLock lock(&mobile_state_lock);
@@ -861,11 +917,17 @@ void register_mobile_activity_callback(void (*callback)(MobileState))
 #endif
 }
 
-void report_remote_mobile_activity(/* struct in_addr ip_addr, */ MobileState state)
+void report_remote_mobile_activity(/* struct in_addr ip_addr, */ 
+                                   struct remote_power_state state)
 {
     PthreadScopedLock lock(&remote_power_state_lock);
 
     // TODO: support multiple remotes.
-    remote_mobile_state = state;
-    gettimeofday(&remote_last_mobile_activity, NULL);
+    remote_state = state;
+    if ((state.mobile_queue_len[DOWN] + state.mobile_queue_len[UP]) > 0) {
+        // only update if the mobile queue lengths have changed,
+        //  which indicates activity on the 3G interface.
+        // If they are zero, this is just a wifi packet rate update.
+        gettimeofday(&remote_last_mobile_activity, NULL);
+    }
 }

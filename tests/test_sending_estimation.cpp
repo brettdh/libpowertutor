@@ -463,9 +463,16 @@ static pthread_mutex_t power_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t power_monitor_cv = PTHREAD_COND_INITIALIZER;
 static bool power_monitor_running = true;
 static bool power_monitor_updated = false;
-static MobileState power_monitor_state = MOBILE_POWER_STATE_IDLE;
 
-static void mobile_activity_callback(MobileState state)
+enum dir { DOWN=0, UP };
+// this is only used to pass data to the power monitor thread
+//  to be sent to the server side.  It is not used in power calculations
+//  on the handset.
+static struct remote_power_state power_monitor_state = {
+    MOBILE_POWER_STATE_IDLE, {0, 0}, 0
+};
+
+static void mobile_activity_callback(struct remote_power_state state)
 {
     PthreadScopedLock lock(&power_monitor_lock);
     power_monitor_updated = true;
@@ -491,10 +498,18 @@ static void *PowerMonitorThread(void *arg)
         }
 
         // the state is updated; send it along
-        int state = htonl(power_monitor_state);
+        struct remote_power_state state = power_monitor_state;
         lock.release();
-        LOGD("Informing remote about %s-state activity\n", 
-             mobile_state_str[ntohl(state)]);
+        LOGD("Informing remote: %s-state activity, queue[d,u] = {%d, %d}, "
+             "wifi pkt rate = %d\n", mobile_state_str[state.mobile_state], 
+             state.mobile_queue_len[DOWN], state.mobile_queue_len[UP],
+             state.wifi_packet_rate);
+        state.mobile_state = htonl(state.mobile_state);
+        state.mobile_queue_len[DOWN] 
+            = htonl(state.mobile_queue_len[DOWN]);
+        state.mobile_queue_len[UP] = htonl(state.mobile_queue_len[UP]);
+        state.wifi_packet_rate = htonl(state.wifi_packet_rate);
+        
         int rc = write(sock, &state, sizeof(state));
         if (rc != sizeof(state)) {
             break;
@@ -706,15 +721,22 @@ RemotePowerUpdateThread(void *arg)
 
     LOGD("Remote power monitor thread started\n");
     while (1) {
-        int remote_power_state;
-        int rc = read(sock, &remote_power_state, sizeof(remote_power_state));
-        if (rc != sizeof(remote_power_state)) {
+        struct remote_power_state state;
+        int rc = read(sock, &state, sizeof(state));
+        if (rc != sizeof(state)) {
             break;
         }
 
-        MobileState state = (MobileState) ntohl(remote_power_state);
-        LOGD("Got update about %s-state activity\n",
-             mobile_state_str[state]);
+        state.mobile_state = ntohl(state.mobile_state);
+        state.state.mobile_queue_len[DOWN] 
+            = ntohl(state.mobile_queue_len[DOWN]);
+        state.state.mobile_queue_len[UP] = ntohl(state.mobile_queue_len[UP]);
+        state.wifi_packet_rate = ntohl(state.wifi_packet_rate);
+        LOGD("Got update about %s-state activity: "
+             "queue[d,u] = {%d, %d}, wifi pkt rate = %d\n",
+             mobile_state_str[state.mobile_state],
+             state.mobile_queue_len[DOWN], state.mobile_queue_len[DOWN],
+             state.wifi_packet_rate);
         report_remote_mobile_activity(state);
     }
     

@@ -32,6 +32,14 @@ int estimate_energy_cost(NetworkType type, size_t datalen,
                          size_t bandwidth, size_t rtt_ms);
 
 
+struct remote_power_state {
+    int mobile_state;
+    int mobile_queue_len[2]; // down, up (handset perspecive)
+    int wifi_packet_rate;
+};
+
+typedef void (*activity_callback_t)(struct remote_power_state);
+
 /* ---------------------------------------------------------------------------
  * This function is used for registering a callback for
  * state changes in the power model.  Applications can use it
@@ -41,7 +49,7 @@ int estimate_energy_cost(NetworkType type, size_t datalen,
  * ---------------------------------------------------------------------------
 */
 /* REQ: callbacks must not block or take a long time. */
-void register_mobile_activity_callback(void (*callback)(MobileState));
+void register_mobile_activity_callback(activity_callback_t callback);
 
 
 #include <netinet/in.h>
