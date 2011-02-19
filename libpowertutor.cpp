@@ -547,7 +547,11 @@ update_wifi_estimated_rates(bool& fire_callback)
     store_counts(wifi_last_packets, packets);
     last_wifi_observation = now;
     
-    if ((wifi_packet_rates[DOWN] + wifi_packet_rates[UP]) > 0) {
+    // hack: only notify if the packet rate gets high enough that
+    //  it might have an impact on small, frequent packet streams.
+    //  This avoids reporting incessantly on the packets that 
+    //  are being sent to inform about the remote power model itself.
+    if ((wifi_packet_rates[DOWN] + wifi_packet_rates[UP]) > 5) {
         fire_callback = true;
     }
     
