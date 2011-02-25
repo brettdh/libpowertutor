@@ -898,6 +898,8 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 // TODO:  to receive N bytes.
 // Considered and rejected.  The receiver doesn't usually know how many
 //   bytes it will receive; the remote sender does, though.
+// TODO: reconsider this, as there are definitely applications for which
+// TODO: this makes sense. (IMAP is one.)
 
 int estimate_energy_cost(NetworkType type, // bool downlink, 
                          size_t datalen, size_t bandwidth, size_t rtt_ms)
