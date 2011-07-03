@@ -11,6 +11,7 @@ TESTSUITE_SRCS := run_all_tests.cpp test_common.cpp
 include $(CLEAR_VARS)
 TEST_SRCS := network_state_test.cpp
 
+LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := run_libpt_unit_tests
 LOCAL_SRC_FILES := $(TESTSUITE_SRCS) $(TEST_SRCS)
 LOCAL_C_INCLUDES := $(common_C_INCLUDES)
@@ -33,6 +34,7 @@ include $(BUILD_EXECUTABLE)
 
 
 include $(CLEAR_VARS)
+LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := test_sending_estimation
 LOCAL_SRC_FILES := test_sending_estimation.cpp ../utils.cpp ../timeops.cpp \
 	$(addprefix ../../libcmm/, libcmm_external_ipc.cpp debug.cpp)

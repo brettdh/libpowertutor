@@ -23,13 +23,7 @@
 #include "timeops.h"
 #include "utils.h"
 
-#ifdef ANDROID
-#define LOG_TAG "libpowertutor"
-#include <cutils/log.h>
-#else
-#define LOGD printf
-#define LOGE(...) fprintf(stderr, __VA_ARGS__)
-#endif
+#include "debug.h"
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
