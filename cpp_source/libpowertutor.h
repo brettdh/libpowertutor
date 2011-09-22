@@ -33,6 +33,8 @@ extern const char *mobile_state_str[];
 int estimate_energy_cost(NetworkType type, size_t datalen, 
                          size_t bandwidth, size_t rtt_ms);
 
+int estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
+int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
 struct remote_power_state {
     int mobile_state;

@@ -224,7 +224,7 @@ time_since_last_mobile_activity(bool already_locked=false)
 }
 
 
-static int 
+int 
 estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     // XXX: this doesn't account for the impact that the large
@@ -819,7 +819,7 @@ wifi_high_state(size_t datalen)
     return (cur_packets + packet_rate) > powerModel->WIFI_PACKET_RATE_THRESHOLD;
 }
 
-static int 
+int 
 estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     int power = 0;
