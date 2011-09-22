@@ -20,70 +20,47 @@
 #include "pthread_util.h"
 
 #include "libpowertutor.h"
+#include "power_model.h"
 #include "timeops.h"
 #include "utils.h"
 
 #ifdef ANDROID
-#define LOG_TAG "libpowertutor"
-#include <cutils/log.h>
-#else
-#define LOGD printf
-#define LOGE(...) fprintf(stderr, __VA_ARGS__)
+static const char *LOG_FILENAME = "/sdcard/intnw/power_model.log";
+static FILE *logfile;
+
+void LOGD(const char *fmt, ...)
+{
+    if (logfile) {
+        time_t now = time(NULL);
+        char time_str[30];
+        ctime_r(&now, time_str);
+        time_str[strlen(time_str) - 1] = '\0'; /* trim the newline */
+        fprintf(logfile, "%s ", time_str);
+
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(logfile, fmt, ap);
+        va_end(ap);
+        fflush(logfile);
+    }
+}
 #endif
+
+#define MOBILE_IFACE "rmnet0"
+#define WIFI_IFACE "eth0"
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
 using std::min; using std::max;
 
-// PowerTutor [1] power model for the HTC Dream.
-// [1] Zhang et al. "Accurate Online Power Estimation and Automatic Battery
-// Behavior Based Power Model Generation for Smartphones," CODES+ISSS '10.
-
 static const int TCP_HDR_SIZE = 32;
 static const int IP_HDR_SIZE = 20;
-
-// all power vals in mW
-//static const int WIFI_TRANSMIT_POWER = 1000;
-static const int WIFI_HIGH_POWER_BASE = 710;
-static const int WIFI_LOW_POWER = 20;
 
 const char *mobile_state_str[3] = {
     "IDLE", "FACH", "DCH"
 };
 
-// XXX: These are for 3G only; careful when testing!
-static const int MOBILE_IDLE_POWER = 10;
-static const int MOBILE_FACH_POWER = 401;
-static const int MOBILE_DCH_POWER = 570;
-
-static const int power_coeffs[MOBILE_POWER_STATE_DCH + 1] = {
-    MOBILE_IDLE_POWER,
-    MOBILE_FACH_POWER,
-    MOBILE_DCH_POWER
-};
-
-static inline int
-power_coeff(MobileState state)
-{
-    return power_coeffs[state];
-}
-
-// byte queue thresholds for transition to DCH state
-static const int MOBILE_DCH_THRESHOLD_DOWN = 119;
-static const int MOBILE_DCH_THRESHOLD_UP = 151;
-
-static inline int
-get_dch_threshold(bool downlink)
-{
-    return downlink ? MOBILE_DCH_THRESHOLD_DOWN : MOBILE_DCH_THRESHOLD_UP;
-}
-
-// in seconds
-static const double MOBILE_FACH_INACTIVITY_TIMER = 6.0;
-static const double MOBILE_DCH_INACTIVITY_TIMER = 4.0;
-
-// threshold for transitioning to wifi high-power state
-static const int WIFI_PACKET_RATE_THRESHOLD = 15; // packets/sec
+static PowerModel *powerModel;
 
 /* Information needed to make calculations (based on power state inference):
  * 1) Uplink/downlink queue size
@@ -206,7 +183,7 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
     // Right now we're experimenting with (3).
     int bytes[2] = {-1, -1}, dummy[2];
     int recent_bytes[2] = {0, 0};
-    int rc = get_net_dev_stats("rmnet0", bytes, dummy);
+    int rc = get_net_dev_stats(MOBILE_IFACE, bytes, dummy);
 
     PthreadScopedLock lock(&mobile_state_lock);
     struct timeval now, diff;
@@ -300,7 +277,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
         get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
     }
     
-    int threshold = get_dch_threshold(downlink);
+    int threshold = powerModel->get_dch_threshold(downlink);
     LOGD("DCH threshold %d -- queue length %d (%d predicted)\n",
          threshold, queue_len, queue_len + datalen);
     if (old_state == MOBILE_POWER_STATE_DCH ||
@@ -308,7 +285,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
         new_state = MOBILE_POWER_STATE_DCH;
     }
     
-    int ack_dir_threshold = get_dch_threshold(!downlink);
+    int ack_dir_threshold = powerModel->get_dch_threshold(!downlink);
     // XXX: WRONG.  don't assume an arbitrary number of bytes 
     // XXX:  only generates one TCP ack.
     // TODO: fix.
@@ -335,39 +312,40 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     if (old_state == MOBILE_POWER_STATE_IDLE) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
             // FACH inactivity timeout only; data transferred in DCH
-            fach_energy = MOBILE_FACH_POWER * MOBILE_FACH_INACTIVITY_TIMER;
+            fach_energy = (powerModel->MOBILE_FACH_POWER * 
+                           powerModel->MOBILE_FACH_INACTIVITY_TIMER);
             
-            duration += MOBILE_DCH_INACTIVITY_TIMER;
-            dch_energy = MOBILE_DCH_POWER * duration;
+            duration += powerModel->MOBILE_DCH_INACTIVITY_TIMER;
+            dch_energy = powerModel->MOBILE_DCH_POWER * duration;
             LOGD("Now in DCH: dch_energy %d fach_energy %d\n",
                  dch_energy, fach_energy);
         } else {
             // cost of transferring data in FACH state + FACH timeout
-            duration += MOBILE_FACH_INACTIVITY_TIMER;
-            fach_energy = MOBILE_FACH_POWER * duration;
+            duration += powerModel->MOBILE_FACH_INACTIVITY_TIMER;
+            fach_energy = powerModel->MOBILE_FACH_POWER * duration;
             LOGD("Now in FACH: fach_energy %d\n", fach_energy);
         }
     } else if (old_state == MOBILE_POWER_STATE_FACH) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
             // DCH + extending FACH time by postponing inactivity timeout
-            duration += MOBILE_DCH_INACTIVITY_TIMER;
-            dch_energy = MOBILE_DCH_POWER * duration;
+            duration += powerModel->MOBILE_DCH_INACTIVITY_TIMER;
+            dch_energy = powerModel->MOBILE_DCH_POWER * duration;
             
             // extending FACH time
             double fach_duration = min(time_since_last_mobile_activity(), 
-                                       MOBILE_FACH_INACTIVITY_TIMER);
-            fach_energy = fach_duration * MOBILE_FACH_POWER;
+                                       powerModel->MOBILE_FACH_INACTIVITY_TIMER);
+            fach_energy = fach_duration * powerModel->MOBILE_FACH_POWER;
             LOGD("Now in DCH: extending FACH time by %f seconds "
                  "(costs %d mJ)\n",
                  fach_duration, fach_energy);
         } else {
             // extending FACH time
             double fach_duration = min(time_since_last_mobile_activity(), 
-                                       MOBILE_FACH_INACTIVITY_TIMER);
+                                       powerModel->MOBILE_FACH_INACTIVITY_TIMER);
             duration += fach_duration;
             
-            fach_energy = duration * MOBILE_FACH_POWER;
-            int extend_energy = fach_duration * MOBILE_FACH_POWER;
+            fach_energy = duration * powerModel->MOBILE_FACH_POWER;
+            int extend_energy = fach_duration * powerModel->MOBILE_FACH_POWER;
             LOGD("Extending FACH time by %f seconds (costs %d mJ)\n",
                  fach_duration, extend_energy);
         }
@@ -375,10 +353,10 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
         assert(old_state == MOBILE_POWER_STATE_DCH);
         // extending DCH time by postponing inactivity timeout
         double dch_duration = min(time_since_last_mobile_activity(), 
-                                  MOBILE_DCH_INACTIVITY_TIMER);
+                                  powerModel->MOBILE_DCH_INACTIVITY_TIMER);
         duration += dch_duration;
-        dch_energy = duration * MOBILE_DCH_POWER;
-        int extend_energy = dch_duration * MOBILE_DCH_POWER;
+        dch_energy = duration * powerModel->MOBILE_DCH_POWER;
+        int extend_energy = dch_duration * powerModel->MOBILE_DCH_POWER;
         LOGD("Extending DCH time by %f seconds (costs %d mJ)\n",
              dch_duration, extend_energy);
     }
@@ -392,7 +370,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     return max(0, fach_energy) + max(0, dch_energy);
 }
 
-#include "wifi.h"
+//#include "wifi.h"
 
 const int MAX_80211G_CHANNEL_RATE = 54;
 
@@ -400,6 +378,12 @@ int
 wifi_channel_rate()
 {
 #ifdef ANDROID
+    // This doesn't make a huge difference, and I haven't gotten it to 
+    //  build with the new toolchain yet, so I'm not going to spend 
+    //  time on it right now.
+    return MAX_80211G_CHANNEL_RATE;
+
+#if 0
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
@@ -429,6 +413,7 @@ wifi_channel_rate()
     
     sscanf(reply, "%*s %u", &linkspeed);
     return linkspeed;
+#endif
 #else
     // TOD: IMPL (get from remote)
     return MAX_80211G_CHANNEL_RATE;
@@ -515,7 +500,7 @@ update_wifi_estimated_rates(bool& fire_callback)
 {
     struct timeval now, diff;
     int bytes[2] = {0,0}, packets[2] = {0,0};
-    int rc = get_net_dev_stats("tiwlan0", bytes, packets);
+    int rc = get_net_dev_stats(WIFI_IFACE, bytes, packets);
     if (rc < 0) {
         return rc;
     }
@@ -562,7 +547,7 @@ int
 update_mobile_state(bool& fire_callback)
 {
     int bytes[2] = {0,0}, dummy[2] = {0,0};
-    int rc = get_net_dev_stats("rmnet0", bytes, dummy);
+    int rc = get_net_dev_stats(MOBILE_IFACE, bytes, dummy);
     if (rc < 0) {
         return rc;
     }
@@ -594,11 +579,11 @@ update_mobile_state(bool& fire_callback)
             for (int i = DOWN; i <= UP; ++i) {
                 delta_bytes[i] = bytes[i] - mobile_last_bytes[i];
                 if ((state_change || mobile_state != MOBILE_POWER_STATE_DCH) &&
-                    delta_bytes[i] >= get_dch_threshold(i == DOWN)) {
+                    delta_bytes[i] >= powerModel->get_dch_threshold(i == DOWN)) {
                     LOGD("%s bytecount (%d) >= threshold (%d) ; "
                          "switching to DCH\n",
                          ((i == DOWN) ? "downlink" : "uplink"),
-                         delta_bytes[i], get_dch_threshold(i == DOWN));
+                         delta_bytes[i], powerModel->get_dch_threshold(i == DOWN));
                     mobile_state = MOBILE_POWER_STATE_DCH;
                     state_change = true;
                 }
@@ -609,8 +594,8 @@ update_mobile_state(bool& fire_callback)
                 state_change = true;
                 mobile_state = MOBILE_POWER_STATE_FACH;
             }
-            if (down_queue > MOBILE_DCH_THRESHOLD_DOWN ||
-                up_queue > MOBILE_DCH_THRESHOLD_UP) {
+            if (down_queue > powerModel->MOBILE_DCH_THRESHOLD_DOWN ||
+                up_queue > powerModel->MOBILE_DCH_THRESHOLD_UP) {
                 if (mobile_state != MOBILE_POWER_STATE_DCH) {
                     state_change = true;
                 }
@@ -631,7 +616,7 @@ update_mobile_state(bool& fire_callback)
         // check to see if a timeout expired
         double idle_time = time_since_last_mobile_activity(true);
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
-            if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
+            if (idle_time >= powerModel->MOBILE_DCH_INACTIVITY_TIMER) {
                 state_change = true;
                 mobile_state = MOBILE_POWER_STATE_FACH;
                 
@@ -649,7 +634,7 @@ update_mobile_state(bool& fire_callback)
                 //   without using the network.
             }
         } else if (mobile_state == MOBILE_POWER_STATE_FACH) {
-            if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
+            if (idle_time >= powerModel->MOBILE_FACH_INACTIVITY_TIMER) {
                 state_change = true;
                 mobile_state = MOBILE_POWER_STATE_IDLE;
             }
@@ -766,6 +751,11 @@ NetworkStatsUpdateThread(void *)
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
+    logfile = fopen(LOG_FILENAME, "a");
+
+    // hard-coded power model choice for now; could guess from phone info
+    powerModel = PowerModel::get(NEXUS_ONE);
+    
     LOGD("Starting update thread\n");
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -784,6 +774,8 @@ static void libpowertutor_fin()
     PthreadScopedLock lock(&update_thread_lock);
     running = false;
     pthread_cond_signal(&update_thread_cv);
+
+    fclose(logfile);
 }
 #endif // BUILDING_SHLIB
 
@@ -856,7 +848,7 @@ wifi_high_state(size_t datalen)
     cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
     int packet_rate = wifi_packet_rate();
     LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
-    return (cur_packets + packet_rate) > WIFI_PACKET_RATE_THRESHOLD;
+    return (cur_packets + packet_rate) > powerModel->WIFI_PACKET_RATE_THRESHOLD;
 }
 
 static int 
@@ -868,9 +860,9 @@ estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
     //  and that power consumption is factored into the high/low states'
     //  power calculation.
     if (wifi_high_state(datalen)) {
-        power = WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
+        power = powerModel->WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
     } else {
-        power = WIFI_LOW_POWER;
+        power = powerModel->WIFI_LOW_POWER;
     }
     
     // slightly hacky, but here's what's going on here:
