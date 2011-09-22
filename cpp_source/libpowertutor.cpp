@@ -225,7 +225,7 @@ time_since_last_mobile_activity(bool already_locked=false)
 
 
 static int 
-estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
+estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
     // XXX: this doesn't account for the impact that the large
     // XXX:  RTT of the 3G connection will have on the time it takes
@@ -260,7 +260,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     LOGD("DCH threshold %d -- queue length %d (%d predicted)\n",
          threshold, queue_len, queue_len + datalen);
     if (old_state == MOBILE_POWER_STATE_DCH ||
-        (queue_len + datalen) >= threshold) {
+        (queue_len + datalen) >= (size_t) threshold) {
         new_state = MOBILE_POWER_STATE_DCH;
     }
     
