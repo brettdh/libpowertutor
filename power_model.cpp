@@ -22,6 +22,11 @@ struct HTCDreamPowerModel : public PowerModel {
     
         WIFI_PACKET_RATE_THRESHOLD = 15; // packets/sec
     }
+
+    virtual const char *wifi_iface() {
+        static const char *iface = "tiwlan0";
+        return iface;
+    }
 };
 
 // PowerTutor model for the Nexus One.
@@ -41,6 +46,11 @@ struct NexusOnePowerModel : public PowerModel {
         MOBILE_DCH_INACTIVITY_TIMER = 4.0;
     
         WIFI_PACKET_RATE_THRESHOLD = 15; // packets/sec
+    }
+
+    virtual const char *wifi_iface() {
+        static const char *iface = "eth0";
+        return iface;
     }
 };
 

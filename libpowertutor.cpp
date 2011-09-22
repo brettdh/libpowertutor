@@ -27,7 +27,6 @@
 #include "debug.h"
 
 #define MOBILE_IFACE "rmnet0"
-#define WIFI_IFACE "eth0"
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
@@ -473,7 +472,7 @@ update_wifi_estimated_rates(bool& fire_callback)
 {
     struct timeval now, diff;
     int bytes[2] = {0,0}, packets[2] = {0,0};
-    int rc = get_net_dev_stats(WIFI_IFACE, bytes, packets);
+    int rc = get_net_dev_stats(powerModel->wifi_iface(), bytes, packets);
     if (rc < 0) {
         return rc;
     }

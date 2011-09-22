@@ -41,6 +41,8 @@ struct PowerModel {
         return downlink ? MOBILE_DCH_THRESHOLD_DOWN : MOBILE_DCH_THRESHOLD_UP;
     }
 
+    virtual const char *wifi_iface() = 0;
+
 protected:
     PowerModel() {}
     virtual void init() = 0;
