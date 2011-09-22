@@ -24,27 +24,7 @@
 #include "timeops.h"
 #include "utils.h"
 
-#ifdef ANDROID
-static const char *LOG_FILENAME = "/sdcard/intnw/power_model.log";
-static FILE *logfile;
-
-void LOGD(const char *fmt, ...)
-{
-    if (logfile) {
-        time_t now = time(NULL);
-        char time_str[30];
-        ctime_r(&now, time_str);
-        time_str[strlen(time_str) - 1] = '\0'; /* trim the newline */
-        fprintf(logfile, "%s ", time_str);
-
-        va_list ap;
-        va_start(ap, fmt);
-        vfprintf(logfile, fmt, ap);
-        va_end(ap);
-        fflush(logfile);
-    }
-}
-#endif
+#include "debug.h"
 
 #define MOBILE_IFACE "rmnet0"
 #define WIFI_IFACE "eth0"
@@ -370,7 +350,7 @@ estimate_mobile_energy_cost(int datalen, size_t bandwidth, size_t rtt_ms)
     return max(0, fach_energy) + max(0, dch_energy);
 }
 
-//#include "wifi.h"
+#include "wifi.h"
 
 const int MAX_80211G_CHANNEL_RATE = 54;
 
@@ -378,12 +358,6 @@ int
 wifi_channel_rate()
 {
 #ifdef ANDROID
-    // This doesn't make a huge difference, and I haven't gotten it to 
-    //  build with the new toolchain yet, so I'm not going to spend 
-    //  time on it right now.
-    return MAX_80211G_CHANNEL_RATE;
-
-#if 0
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
@@ -413,7 +387,6 @@ wifi_channel_rate()
     
     sscanf(reply, "%*s %u", &linkspeed);
     return linkspeed;
-#endif
 #else
     // TOD: IMPL (get from remote)
     return MAX_80211G_CHANNEL_RATE;
@@ -751,8 +724,6 @@ NetworkStatsUpdateThread(void *)
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
-    logfile = fopen(LOG_FILENAME, "a");
-
     // hard-coded power model choice for now; could guess from phone info
     powerModel = PowerModel::get(NEXUS_ONE);
     
@@ -774,8 +745,6 @@ static void libpowertutor_fin()
     PthreadScopedLock lock(&update_thread_lock);
     running = false;
     pthread_cond_signal(&update_thread_cv);
-
-    fclose(logfile);
 }
 #endif // BUILDING_SHLIB
 

@@ -8,7 +8,7 @@
 #include <net/if.h>
 #include "utils.h"
 #include <errno.h>
-#include "libpowertutor.h"
+#include "debug.h"
 
 int 
 get_ip_addr(const char *ifname, struct in_addr *ip_addr)

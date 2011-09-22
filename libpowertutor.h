@@ -7,14 +7,6 @@ extern "C" {
 
 #include <sys/types.h>
 
-#ifdef ANDROID
-void LOGD(const char *fmt, ...);
-#define LOGE LOGD
-#else
-#define LOGD printf
-#define LOGE(...) fprintf(stderr, __VA_ARGS__)
-#endif
-
 enum NetworkType {
     TYPE_MOBILE = 0,
     TYPE_WIFI   = 1
