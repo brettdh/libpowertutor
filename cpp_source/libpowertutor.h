@@ -34,6 +34,11 @@ int estimate_energy_cost(NetworkType type, size_t datalen,
                          size_t bandwidth, size_t rtt_ms);
 
 int estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
+
+// ignore the current power state of the radio and 
+//  return the cost as though it were idle.
+int estimate_mobile_energy_cost_from_idle(size_t datalen, size_t bandwidth, size_t rtt_ms);
+
 int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
 struct remote_power_state {

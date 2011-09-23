@@ -224,8 +224,9 @@ time_since_last_mobile_activity(bool already_locked=false)
 }
 
 
-int 
-estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
+static int 
+estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t rtt_ms, 
+                                       bool from_idle)
 {
     // XXX: this doesn't account for the impact that the large
     // XXX:  RTT of the 3G connection will have on the time it takes
@@ -242,7 +243,9 @@ estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
     
     bool downlink = power_model_is_remote();
     
-    MobileState old_state = get_mobile_state();
+    MobileState old_state = (from_idle 
+                             ? MOBILE_POWER_STATE_IDLE
+                             : get_mobile_state());
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
     int queue_len = 0, ack_dir_queue_len = 0;
@@ -347,6 +350,18 @@ estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
     
     // account for possible floating-point math errors
     return max(0, fach_energy) + max(0, dch_energy);
+}
+
+int 
+estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
+{
+    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, false);
+}
+
+int 
+estimate_mobile_energy_cost_from_idle(size_t datalen, size_t bandwidth, size_t rtt_ms)
+{
+    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, true);
 }
 
 #include "wifi.h"
