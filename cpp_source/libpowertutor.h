@@ -41,6 +41,17 @@ int estimate_mobile_energy_cost_from_idle(size_t datalen, size_t bandwidth, size
 
 int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
+
+// these functions deal with the energy-consumption stats for the modeled networks.
+void reset_stats();
+
+// returns estimated energy consumed by network interfaces since last reset, in mJ.
+int energy_consumed_since_reset();
+
+// returns average power consumption by network interfaces since last reset, in mW.
+int average_power_consumption_since_reset();
+
+
 struct remote_power_state {
     int mobile_state;
     int mobile_queue_len[2]; // down, up (handset perspecive)

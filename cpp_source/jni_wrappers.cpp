@@ -28,6 +28,26 @@ Java_edu_umich_libpowertutor_EnergyEstimates_estimateWifiEnergyCost
     return estimate_wifi_energy_cost(datalen, bandwidth, rtt_ms);
 }
 
+JNIEXPORT jint JNICALL
+Java_edu_umich_libpowertutor_EnergyEstimates_energyConsumedSinceReset
+(JNIEnv *jenv, jclass jclass)
+{
+    return energy_consumed_since_reset();
+}
+
+JNIEXPORT jint JNICALL
+Java_edu_umich_libpowertutor_EnergyEstimates_averagePowerConsumptionSinceReset
+(JNIEnv *jenv, jclass jclass)
+{
+    return average_power_consumption_since_reset();
+}
+
+JNIEXPORT void JNICALL
+Java_edu_umich_libpowertutor_EnergyEstimates_resetStats(JNIEnv *jenv, jclass jclass)
+{
+    return reset_stats();
+}
+
 #ifdef __cplusplus
 }
 #endif

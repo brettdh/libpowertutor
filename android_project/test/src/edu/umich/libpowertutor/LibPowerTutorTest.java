@@ -21,6 +21,22 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         assertTrue(cost > 0.0);
     }
     
+    public void testEnergyEstimatesAreSane() throws InterruptedException {
+        Thread.sleep(3000);
+        int energyConsumed = EnergyEstimates.energyConsumedSinceReset();
+        assertTrue(energyConsumed > 0);
+        Thread.sleep(3000);
+        int energyConsumedLater = EnergyEstimates.energyConsumedSinceReset();
+        assertTrue(energyConsumedLater > energyConsumed);
+        
+        int power = EnergyEstimates.averagePowerConsumptionSinceReset();
+        assertTrue(power > 0);
+        
+        EnergyEstimates.resetStats();
+        energyConsumedLater = EnergyEstimates.energyConsumedSinceReset();
+        assertTrue(energyConsumedLater < energyConsumed);
+    }
+    
     static {
         System.loadLibrary("powertutor");
     }

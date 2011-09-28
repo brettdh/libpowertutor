@@ -684,6 +684,7 @@ update_remote_power_model()
 #endif
 
 int wifi_packet_rate();
+static void update_consumption_stats();
 
 #ifdef BUILDING_SHLIB
 static pthread_t update_thread;
@@ -696,7 +697,7 @@ NetworkStatsUpdateThread(void *)
     struct timespec interval = {0, 100 * 1000 * 1000}; // sample every 100ms
     //struct timespec interval = {1, 0}; // sample every 1s
     struct timespec wait_time;
-    
+
     PthreadScopedLock lock(&update_thread_lock);
     while (running) {
 #ifdef ANDROID
@@ -722,6 +723,7 @@ NetworkStatsUpdateThread(void *)
                 callback(state);
             }
         }
+        update_consumption_stats();
 #else
         // TODO: This could work on Android, too (handset-to-handset)
         // TODO:  (but doesn't right now)
@@ -740,6 +742,8 @@ static void libpowertutor_init()
 {
     // hard-coded power model choice for now; could guess from phone info
     powerModel = PowerModel::get(NEXUS_ONE);
+
+    reset_stats();
     
     LOGD("Starting update thread\n");
     pthread_attr_t attr;
@@ -886,6 +890,71 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     } else assert(false);
     
     return -1;
+}
+
+
+// these functions deal with the energy-consumption stats for the modeled networks.
+
+static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct timeval last_reset;
+static struct timeval last_update; // only accessed in NetworkStatsUpdateThread
+static int energy_consumed_mJ;
+
+void reset_stats()
+{
+    PthreadScopedLock lock(&stats_lock);
+    gettimeofday(&last_reset, NULL);
+    last_update = last_reset;
+    energy_consumed_mJ = 0;
+}
+
+static void update_consumption_stats()
+{
+    struct timeval now, diff;
+    gettimeofday(&now, NULL);
+    TIMEDIFF(last_update, now, diff);
+    if (diff.tv_sec <= 0) {
+        // only update once per second
+        return;
+    }
+    last_update = now;
+
+    int energy_consumed_this_second_mJ = 0;
+
+    if (wifi_high_state(0)) {
+        energy_consumed_this_second_mJ +=
+            (powerModel->WIFI_HIGH_POWER_BASE + wifi_channel_rate_component());
+    } else {
+        energy_consumed_this_second_mJ += powerModel->WIFI_LOW_POWER;
+    }
+    
+    MobileState state = get_mobile_state();
+    energy_consumed_this_second_mJ += powerModel->power_coeff(state);
+
+    PthreadScopedLock lock(&stats_lock);
+    energy_consumed_mJ += energy_consumed_this_second_mJ;
+}
+
+// returns estimated energy consumed by network interfaces since last reset, in mJ.
+int energy_consumed_since_reset()
+{
+    PthreadScopedLock lock(&stats_lock);
+    return energy_consumed_mJ;
+}
+
+// returns average power consumption by network interfaces since last reset, in mW.
+int average_power_consumption_since_reset()
+{
+    struct timeval begin, now, diff;
+
+    PthreadScopedLock lock(&stats_lock);
+    begin = last_reset;
+
+    gettimeofday(&now, NULL);
+    TIMEDIFF(begin, now, diff);
+    
+    double seconds_since_reset = diff.tv_sec + ((double) diff.tv_usec) / 1000000.0;
+    return energy_consumed_mJ / seconds_since_reset;
 }
 
 
