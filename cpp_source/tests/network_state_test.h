@@ -18,6 +18,7 @@ class NetworkStateTest : public CppUnit::TestFixture {
     void testChannelRate();
     void testQueueSize();
     void testWifiParams();
+    void testStateTimeFraction();
 };
 
 #endif /* end of include guard: NETWORK_STATE_TEST_H_1HOUZMOH */

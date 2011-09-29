@@ -120,4 +120,6 @@ struct TimeFunctionBody {
 suseconds_t convert_to_useconds(struct timeval tv);
 struct timeval convert_to_timeval(u_long useconds);
 
+double convert_to_seconds(struct timeval tv);
+
 #endif /* timeops_h_incl */

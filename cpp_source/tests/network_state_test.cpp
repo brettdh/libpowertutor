@@ -1,9 +1,9 @@
 #include <cppunit/Test.h>
 #include <cppunit/TestAssert.h>
 #include "network_state_test.h"
+#include "../libpowertutor.h"
 
-#define LOG_TAG "NetworkStateTest"
-#include <cutils/log.h>
+#include "../debug.h"
 
 CPPUNIT_TEST_SUITE_REGISTRATION(NetworkStateTest);
 
@@ -12,6 +12,7 @@ extern int wifi_channel_rate();
 extern int wifi_packet_rate();
 extern int wifi_uplink_data_rate();
 extern int update_wifi_estimated_rates(bool&);
+extern double time_fraction_in_state(MobileState state);
 
 void 
 NetworkStateTest::setUp()
@@ -60,4 +61,10 @@ NetworkStateTest::testWifiParams()
         }
         sleep(1);
     }
+}
+
+void
+NetworkStateTest::testStateTimeFraction()
+{
+    
 }

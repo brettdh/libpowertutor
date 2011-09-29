@@ -5,7 +5,7 @@ ANDROID_INCLUDES := $(MY_ANDROID_SRC_ROOT)/system/core/include
 ANDROID_INCLUDES += $(MY_ANDROID_SRC_ROOT)/external/wpa_supplicant
 
 MY_SRCS := libpowertutor.cpp power_model.cpp timeops.cpp utils.cpp wifi.cpp jni_wrappers.cpp
-MY_CFLAGS := -g -O0 -Wall -Werror -DANDROID
+MY_CFLAGS := -g -ggdb -O0 -Wall -Werror -DANDROID
 
 include $(CLEAR_VARS)
 

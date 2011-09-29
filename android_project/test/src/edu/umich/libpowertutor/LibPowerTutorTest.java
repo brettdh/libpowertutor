@@ -6,21 +6,27 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 
 import android.test.InstrumentationTestCase;
+import android.util.Log;
 
 public class LibPowerTutorTest extends InstrumentationTestCase {
+    private static final String TAG = LibPowerTutorTest.class.getName();
+
     @Override
     protected void setUp() {
         try {
-            Thread.sleep(3000);
+            // force the library to be loaded
+            EnergyEstimates.estimateMobileEnergyCost(1, 1, 1);
+            
+            Thread.sleep(12000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
     
-    public void testSmoke() {
+    public void testSmoke() throws InterruptedException {
         double cost = EnergyEstimates.estimateMobileEnergyCost(500000, 10000, 200);
         assertTrue(cost > 0.0);
-        cost = EnergyEstimates.estimateMobileEnergyCostFromIdle(500000, 10000, 200);
+        cost = EnergyEstimates.estimateMobileEnergyCostAverage(500000, 10000, 200);
         assertTrue(cost > 0.0);
         cost = EnergyEstimates.estimateWifiEnergyCost(500000, 10000, 200);
         assertTrue(cost > 0.0);
@@ -51,23 +57,95 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         int energyStart = EnergyEstimates.energyConsumedSinceReset();
         assertTrue(energyStart > 0);
         
-        Socket socket = new Socket("141.212.110.132", 4321);
-        InputStream in = socket.getInputStream();
-        byte[] buf = new byte[4096];
-        long begin_ms = System.currentTimeMillis();
-        while (in.read(buf) > 0 && 
-               (System.currentTimeMillis() - begin_ms) < 3000) {
-            // nothing; read lots of bytes
-        }
-        in.close();
-        socket.close();
+        downloadBytesForDuration(3000);
         int transferEnergy = EnergyEstimates.energyConsumedSinceReset() - energyStart;
         assertTrue(transferEnergy > 1000);
         
         int transferPower = EnergyEstimates.averagePowerConsumptionSinceReset();
         assertTrue(transferPower > 300);
     }
+
+    private void downloadBytesForDuration(int durationMillis) throws UnknownHostException,
+            IOException {
+        Socket socket = new Socket("141.212.110.132", 4321);
+        InputStream in = socket.getInputStream();
+        byte[] buf = new byte[4096];
+        long begin_ms = System.currentTimeMillis();
+        while (in.read(buf) > 0 && 
+               (System.currentTimeMillis() - begin_ms) < durationMillis) {
+            // nothing; read lots of bytes
+        }
+        in.close();
+        socket.close();
+    }
     
+    public void testAverageEnergyEstimate() throws InterruptedException, IOException {
+        int energy, avgEnergy;
+        
+        energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
+        avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
+        assertEquals(energy, avgEnergy, 30);
+        
+        Thread.sleep(5000);
+        downloadBytes(4096);
+        
+        // avg should still reflect IDLE state
+        avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
+        assertEquals(energy, avgEnergy, 30);
+        
+        energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
+        assertTrue(avgEnergy < energy);
+        assertTrue((energy - avgEnergy) > 200);
+        
+        downloadBytesForDuration(8000);
+        
+        energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
+        avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
+        assertEquals(avgEnergy, energy, 30);
+    }
+    
+    public void testLogPowerConsumptionOverTime() throws IOException, InterruptedException {
+        logMobileEnergyEstimate(10, 1000, 10, false);
+        logMobileEnergyEstimate(100, 1000, 10, false);
+        logMobileEnergyEstimate(1000, 1000, 10, false);
+        
+        logMobileEnergyEstimate(10, 1000, 10, true);
+        logMobileEnergyEstimate(100, 1000, 10, true);
+        logMobileEnergyEstimate(1000, 1000, 10, true);
+        
+        downloadBytes(4096);
+        
+        Thread.sleep(2000);
+        
+        logMobileEnergyEstimate(10, 1000, 10, false);
+        logMobileEnergyEstimate(100, 1000, 10, false);
+        logMobileEnergyEstimate(1000, 1000, 10, false);
+        
+        logMobileEnergyEstimate(10, 1000, 10, true);
+        logMobileEnergyEstimate(100, 1000, 10, true);
+        logMobileEnergyEstimate(1000, 1000, 10, true);
+    }
+
+    private void downloadBytes(int bytes) throws UnknownHostException, IOException {
+        Socket socket = new Socket("141.212.110.132", 4321);
+        InputStream in = socket.getInputStream();
+        byte[] buf = new byte[bytes];
+        in.read(buf);
+        in.close();
+        socket.close();
+    }
+    
+    private void logMobileEnergyEstimate(int datalen, int bandwidth, int rtt_ms, boolean average) {
+        int energy = 0;
+        if (average) {
+            energy = EnergyEstimates.estimateMobileEnergyCost(datalen, bandwidth, rtt_ms);
+        } else {
+            energy = EnergyEstimates.estimateMobileEnergyCostAverage(datalen, bandwidth, rtt_ms);
+        }
+        Log.d(TAG, String.format("%s energy estimate (datalen %d bw %d rtt_ms %d): %d mJ",
+                                 average ? "average" : "spot", datalen, bandwidth, rtt_ms, energy));
+    }
+
     static {
         System.loadLibrary("powertutor");
     }

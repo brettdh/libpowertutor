@@ -22,8 +22,7 @@ using CppUnit::Test;
 //bool g_receiver = false;
 //char *g_hostname = (char*)"localhost";
 
-#define LOG_TAG "AndroidLogTestHarness"
-#include <cutils/log.h>
+#include "../debug.h"
 
 class AndroidLogTestListener : public TestListener {
     TestFailure *lastFailure;

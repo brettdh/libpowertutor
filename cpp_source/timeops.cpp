@@ -59,3 +59,8 @@ struct timeval convert_to_timeval(u_long useconds)
     tv.tv_usec = useconds - (tv.tv_sec * 1000000);
     return tv;
 }
+
+double convert_to_seconds(struct timeval tv)
+{
+    return (tv.tv_sec + tv.tv_usec / 1000000.0);
+}

@@ -74,8 +74,19 @@ pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
 static struct timeval last_mobile_activity = {0, 0};
 static struct timeval last_mobile_sample_time = {0, 0};
+static struct timeval last_mobile_state_change = {0, 0};
 static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
+
+// start idle with a non-zero value so that the 
+//  state weight calculation starts as 100% idle
+static struct timeval time_in_mobile_state[3] = {{1,0}, {0,0}, {0,0}};
+
+// the IDLE state will never be used, since it has no bearing
+//  on the energy estimation, but it's simpler to track it
+//  like the rest and ignore it rather than to special-case it out.
+static double idle_durations_per_state[3] = {0.0, 0.0, 0.0};
+static int idle_duration_update_counts[3] = {1, 1, 1};
 
 #ifdef ANDROID
 static activity_callback_t mobile_activity_callback = NULL;
@@ -223,10 +234,9 @@ time_since_last_mobile_activity(bool already_locked=false)
     return time_since(*activity);
 }
 
-
 static int 
 estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t rtt_ms, 
-                                       bool from_idle)
+                                       MobileState old_state, double idle_duration)
 {
     // XXX: this doesn't account for the impact that the large
     // XXX:  RTT of the 3G connection will have on the time it takes
@@ -243,9 +253,6 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
     
     bool downlink = power_model_is_remote();
     
-    MobileState old_state = (from_idle 
-                             ? MOBILE_POWER_STATE_IDLE
-                             : get_mobile_state());
     MobileState new_state = MOBILE_POWER_STATE_FACH;
     
     int queue_len = 0, ack_dir_queue_len = 0;
@@ -289,7 +296,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
     
     double duration = ((double)datalen) / bandwidth;
     duration += rtt_ms / 1000.0;  // accounting for the last TCP ack
-    
+
     int fach_energy = 0, dch_energy = 0;
     if (old_state == MOBILE_POWER_STATE_IDLE) {
         if (new_state == MOBILE_POWER_STATE_DCH) {
@@ -314,7 +321,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
             dch_energy = powerModel->MOBILE_DCH_POWER * duration;
             
             // extending FACH time
-            double fach_duration = min(time_since_last_mobile_activity(), 
+            double fach_duration = min(idle_duration, 
                                        powerModel->MOBILE_FACH_INACTIVITY_TIMER);
             fach_energy = fach_duration * powerModel->MOBILE_FACH_POWER;
             LOGD("Now in DCH: extending FACH time by %f seconds "
@@ -322,7 +329,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
                  fach_duration, fach_energy);
         } else {
             // extending FACH time
-            double fach_duration = min(time_since_last_mobile_activity(), 
+            double fach_duration = min(idle_duration, 
                                        powerModel->MOBILE_FACH_INACTIVITY_TIMER);
             duration += fach_duration;
             
@@ -334,7 +341,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
     } else {
         assert(old_state == MOBILE_POWER_STATE_DCH);
         // extending DCH time by postponing inactivity timeout
-        double dch_duration = min(time_since_last_mobile_activity(), 
+        double dch_duration = min(idle_duration, 
                                   powerModel->MOBILE_DCH_INACTIVITY_TIMER);
         duration += dch_duration;
         dch_energy = duration * powerModel->MOBILE_DCH_POWER;
@@ -355,13 +362,72 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
 int 
 estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
-    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, false);
+    MobileState old_state = get_mobile_state();
+    double idle_duration = time_since_last_mobile_activity();
+    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, 
+                                                  old_state, idle_duration);
 }
 
-int 
-estimate_mobile_energy_cost_from_idle(size_t datalen, size_t bandwidth, size_t rtt_ms)
+
+double
+time_fraction_in_state(MobileState state)
 {
-    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, true);
+    struct timeval time_in_state = {0,0}, total_time = {0,0};
+
+    PthreadScopedLock lock(&mobile_state_lock);
+    for (int i = MOBILE_POWER_STATE_IDLE; 
+         i <= MOBILE_POWER_STATE_DCH; ++i) {
+        timeradd(&total_time, &time_in_mobile_state[i], &total_time);
+    }
+    struct timeval now, mobile_state_duration;
+    gettimeofday(&now, NULL);
+    TIMEDIFF(last_mobile_state_change, now, mobile_state_duration);
+    
+    // include the time in the current state since the last state change
+    timeradd(&time_in_state, &mobile_state_duration, &time_in_state);
+    timeradd(&total_time, &mobile_state_duration, &total_time);
+
+    double state_time_secs = convert_to_seconds(time_in_mobile_state[state]);
+    double total_time_secs = convert_to_seconds(total_time);
+    return state_time_secs / total_time_secs;
+}
+
+static void update_idle_duration_for_state(MobileState state, double idle_duration)
+{
+    // must already be holding mobile_state_lock
+    idle_durations_per_state[state] += idle_duration;
+    idle_duration_update_counts[state]++;
+}
+
+static double average_idle_duration_for_state(MobileState state)
+{
+    PthreadScopedLock lock(&mobile_state_lock);
+    return idle_durations_per_state[state] / idle_duration_update_counts[state];
+}
+
+
+int 
+estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwidth, size_t avg_rtt_ms)
+{
+    LOGD("Computing average mobile energy cast: datalen %zu bw %zu rtt %zu\n",
+         datalen, avg_bandwidth, avg_rtt_ms);
+    
+    double weighted_energy_cost = 0.0;
+    for (int state = MOBILE_POWER_STATE_IDLE; 
+         state <= MOBILE_POWER_STATE_DCH; ++state) {
+        double idle_duration = average_idle_duration_for_state(MobileState(state));
+        int energy_cost = 
+            estimate_mobile_energy_cost_from_state(datalen, avg_bandwidth, avg_rtt_ms, 
+                                                   MobileState(state), idle_duration);
+        double weight = time_fraction_in_state(MobileState(state));
+
+        LOGD("Considering state %s: weight %f idle_dur %f cost %d weighted cost %f\n",
+             mobile_state_str[state], weight, idle_duration, energy_cost, 
+             weight * energy_cost);
+        weighted_energy_cost += (weight * energy_cost);
+    }
+    LOGD("Average energy cost: %d\n", (int) weighted_energy_cost);
+    return (int) weighted_energy_cost;
 }
 
 #include "wifi.h"
@@ -543,10 +609,13 @@ update_mobile_state(bool& fire_callback)
     bool mobile_activity = false;
     
     PthreadScopedLock lock(&mobile_state_lock);
-    struct timeval now, diff;
+    MobileState last_state = mobile_state;
+
+    struct timeval now, time_since_last_sample;
     gettimeofday(&now, NULL);
-    TIMEDIFF(last_mobile_sample_time, now, diff);
-    if (diff.tv_sec >= 1 && // only sample this data every second
+    TIMEDIFF(last_mobile_sample_time, now, time_since_last_sample);
+
+    if (time_since_last_sample.tv_sec >= 1 && // only sample this data every second
         (bytes[DOWN] > mobile_last_bytes[DOWN] ||
          bytes[UP] > mobile_last_bytes[UP])) {
         // there's been activity recently,
@@ -596,9 +665,8 @@ update_mobile_state(bool& fire_callback)
         // This still gets checked every 100ms or however often.
 
         // no activity recently; reset these to zero
-        for (int i = DOWN; i <= UP; ++i) {
-            mobile_last_delta_bytes[i] = 0;
-        }
+        mobile_last_delta_bytes[DOWN] = 0;
+        mobile_last_delta_bytes[UP] = 0;
 
         // check to see if a timeout expired
         double idle_time = time_since_last_mobile_activity(true);
@@ -631,8 +699,31 @@ update_mobile_state(bool& fire_callback)
     if (state_change) {
         LOGD("mobile state changed to %s\n", 
              mobile_state_str[mobile_state]);
+    
+        if (last_mobile_state_change.tv_sec != 0) {
+            // only update the time fractions after there's been a real state change.
+            struct timeval mobile_state_duration;
+            TIMEDIFF(last_mobile_state_change, now, mobile_state_duration);
+            timeradd(&time_in_mobile_state[last_state],
+                     &mobile_state_duration,
+                     &time_in_mobile_state[last_state]);
+        }
+        gettimeofday(&last_mobile_state_change, NULL);
     }
 
+    // do this for the current state so that we catch the 'zero-idle'
+    //  instances when activity causes a state promotion.
+    // Summary of cases:
+    //  state promotion: idle time is zero in new state; zero is added to average.
+    //  same-state: actual idle time is added to average.
+    //  state demotion (timeout): 
+    //      zero time is added to new state average.  we miss the
+    //      timeout value in the old state, but that state doesn't
+    //      really exist anyway, because the radio moves to the new
+    //      state at that moment.
+    double last_idle_duration = time_since_last_mobile_activity(true);
+    update_idle_duration_for_state(mobile_state, last_idle_duration);
+    
     if (mobile_activity) {
         fire_callback = true;
     }
