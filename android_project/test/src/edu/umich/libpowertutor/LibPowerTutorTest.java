@@ -84,24 +84,35 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         
         energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
         avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
+        Log.d(TAG, String.format("energy: %d  avgEnergy: %d", energy, avgEnergy));
         assertEquals(energy, avgEnergy, 30);
         
         Thread.sleep(5000);
         downloadBytes(4096);
         
+        Thread.sleep(1000);
+        
         // avg should still reflect IDLE state
         avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
-        assertEquals(energy, avgEnergy, 30);
+        assertEquals(energy, avgEnergy, 500);
         
+        // current energy estimate should not contain tail time,
+        //  so it will be much less
         energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
-        assertTrue(avgEnergy < energy);
-        assertTrue((energy - avgEnergy) > 200);
+        assertTrue(avgEnergy > energy);
+        assertTrue((avgEnergy - energy) > 1000);
         
         downloadBytesForDuration(8000);
         
-        energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
+        int oldAvgEnergy = avgEnergy;
         avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
-        assertEquals(avgEnergy, energy, 30);
+        assertTrue(avgEnergy < oldAvgEnergy);
+        assertTrue((oldAvgEnergy - avgEnergy) > 200);
+        
+        Thread.sleep(25000); // avg energy should go up with more idle time
+        oldAvgEnergy = avgEnergy;
+        avgEnergy = EnergyEstimates.estimateMobileEnergyCostAverage(1, 1000, 1);
+        assertTrue(avgEnergy > oldAvgEnergy);
     }
     
     public void testLogPowerConsumptionOverTime() throws IOException, InterruptedException {

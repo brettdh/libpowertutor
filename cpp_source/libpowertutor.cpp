@@ -236,7 +236,8 @@ time_since_last_mobile_activity(bool already_locked=false)
 
 static int 
 estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t rtt_ms, 
-                                       MobileState old_state, double idle_duration)
+                                       MobileState old_state, double idle_duration,
+                                       int queue_len, int ack_dir_queue_len)
 {
     // XXX: this doesn't account for the impact that the large
     // XXX:  RTT of the 3G connection will have on the time it takes
@@ -254,17 +255,6 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
     bool downlink = power_model_is_remote();
     
     MobileState new_state = MOBILE_POWER_STATE_FACH;
-    
-    int queue_len = 0, ack_dir_queue_len = 0;
-    if (downlink) {
-        // the handset's downlink queue is the queue we're sending into.
-        //  it will send acks into its uplink queue.
-        get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
-    } else {
-        // the handset is sending into its uplink queue.
-        //  acks will arrive in its downlink queue.
-        get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
-    }
     
     int threshold = powerModel->get_dch_threshold(downlink);
     LOGD("DCH threshold %d -- queue length %d (%d predicted)\n",
@@ -362,10 +352,24 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
 int 
 estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
+    int queue_len = 0, ack_dir_queue_len = 0;
+
+    bool downlink = power_model_is_remote();
+    if (downlink) {
+        // the handset's downlink queue is the queue we're sending into.
+        //  it will send acks into its uplink queue.
+        get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
+    } else {
+        // the handset is sending into its uplink queue.
+        //  acks will arrive in its downlink queue.
+        get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
+    }
+
     MobileState old_state = get_mobile_state();
     double idle_duration = time_since_last_mobile_activity();
     return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, 
-                                                  old_state, idle_duration);
+                                                  old_state, idle_duration,
+                                                  queue_len, ack_dir_queue_len);
 }
 
 
@@ -374,21 +378,48 @@ time_fraction_in_state(MobileState state)
 {
     struct timeval time_in_state = {0,0}, total_time = {0,0};
 
+    LOGD("Estimating time fraction in state %s\n", 
+         mobile_state_str[state]);
+    
     PthreadScopedLock lock(&mobile_state_lock);
     for (int i = MOBILE_POWER_STATE_IDLE; 
          i <= MOBILE_POWER_STATE_DCH; ++i) {
+        LOGD("  %lu.%06lu seconds in state %s\n",
+             time_in_mobile_state[i].tv_sec,
+             time_in_mobile_state[i].tv_usec,
+             mobile_state_str[i]);
         timeradd(&total_time, &time_in_mobile_state[i], &total_time);
     }
+    time_in_state = time_in_mobile_state[state];
+    LOGD("Time in state %s: %lu.%06lu seconds\n",
+         mobile_state_str[state], time_in_state.tv_sec, time_in_state.tv_usec);
+    LOGD("Total time: %lu.%06lu seconds\n",
+         total_time.tv_sec, total_time.tv_usec);
+    
     struct timeval now, mobile_state_duration;
     gettimeofday(&now, NULL);
     TIMEDIFF(last_mobile_state_change, now, mobile_state_duration);
-    
-    // include the time in the current state since the last state change
-    timeradd(&time_in_state, &mobile_state_duration, &time_in_state);
+    if (state == mobile_state) {
+        LOGD("Adding %lu.%06lu seconds in current state (%s)\n",
+             mobile_state_duration.tv_sec,
+             mobile_state_duration.tv_usec,
+             mobile_state_str[mobile_state]);
+        
+        // include the time in the current state since the last state change
+        timeradd(&time_in_state, &mobile_state_duration, &time_in_state);
+    }
     timeradd(&total_time, &mobile_state_duration, &total_time);
 
-    double state_time_secs = convert_to_seconds(time_in_mobile_state[state]);
+    LOGD("Fraction: %lu.%06lu / %lu.%06lu seconds in state %s\n",
+         time_in_state.tv_sec, time_in_state.tv_usec,
+         total_time.tv_sec, total_time.tv_usec,
+         mobile_state_str[state]);
+
+    double state_time_secs = convert_to_seconds(time_in_state);
     double total_time_secs = convert_to_seconds(total_time);
+    LOGD("time_fraction_in_state returning %f / %f = %f\n",
+         state_time_secs, total_time_secs, 
+         state_time_secs / total_time_secs);
     return state_time_secs / total_time_secs;
 }
 
@@ -418,7 +449,8 @@ estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwidth, size_t
         double idle_duration = average_idle_duration_for_state(MobileState(state));
         int energy_cost = 
             estimate_mobile_energy_cost_from_state(datalen, avg_bandwidth, avg_rtt_ms, 
-                                                   MobileState(state), idle_duration);
+                                                   MobileState(state), idle_duration,
+                                                   0, 0); // simplification
         double weight = time_fraction_in_state(MobileState(state));
 
         LOGD("Considering state %s: weight %f idle_dur %f cost %d weighted cost %f\n",
@@ -835,6 +867,7 @@ static void libpowertutor_init()
     powerModel = PowerModel::get(NEXUS_ONE);
 
     reset_stats();
+    gettimeofday(&last_mobile_state_change, NULL);
     
     LOGD("Starting update thread\n");
     pthread_attr_t attr;
