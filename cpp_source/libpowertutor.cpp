@@ -860,6 +860,8 @@ NetworkStatsUpdateThread(void *)
     return NULL;
 }
 
+static void reset_stats();
+
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
 {
@@ -1024,7 +1026,7 @@ static struct timeval last_reset;
 static struct timeval last_update; // only accessed in NetworkStatsUpdateThread
 static int energy_consumed_mJ;
 
-void reset_stats()
+static void reset_stats()
 {
     PthreadScopedLock lock(&stats_lock);
     gettimeofday(&last_reset, NULL);

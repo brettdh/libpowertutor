@@ -33,26 +33,24 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
     }
     
     public void testEnergyEstimatesAreSane() throws InterruptedException {
-        EnergyEstimates.resetStats();
+        EnergyUsage usage = new EnergyUsage();
         
         Thread.sleep(3000);
-        int energyConsumed = EnergyEstimates.energyConsumedSinceReset();
+        int energyConsumed = usage.energyConsumed();
         assertTrue(energyConsumed > 0);
         Thread.sleep(3000);
-        int energyConsumedLater = EnergyEstimates.energyConsumedSinceReset();
+        int energyConsumedLater = usage.energyConsumed();
         assertTrue(energyConsumedLater > energyConsumed);
         
         int power = EnergyEstimates.averagePowerConsumptionSinceReset();
         assertTrue(power > 0);
         
-        EnergyEstimates.resetStats();
-        energyConsumedLater = EnergyEstimates.energyConsumedSinceReset();
+        usage.reset();
+        energyConsumedLater = usage.energyConsumed();
         assertTrue(energyConsumedLater < energyConsumed);
     }
     
     public void testEnergyConsumptionTracked() throws InterruptedException, IOException {
-        EnergyEstimates.resetStats();
-        
         Thread.sleep(3000);
         int energyStart = EnergyEstimates.energyConsumedSinceReset();
         assertTrue(energyStart > 0);
@@ -135,6 +133,20 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         logMobileEnergyEstimate(10, 1000, 10, true);
         logMobileEnergyEstimate(100, 1000, 10, true);
         logMobileEnergyEstimate(1000, 1000, 10, true);
+    }
+    
+    public void testIsolatedEnergyUsageTracking() throws IOException, InterruptedException {
+        EnergyUsage usage1 = new EnergyUsage();
+        EnergyUsage usage2 = new EnergyUsage();
+        
+        downloadBytes(4096);
+        Thread.sleep(2000);
+
+        assertTrue(usage1.energyConsumed() > 0);
+        assertTrue(usage2.energyConsumed() > 0);
+        
+        usage2.reset();
+        assertTrue(usage2.energyConsumed() < usage1.energyConsumed());
     }
 
     private void downloadBytes(int bytes) throws UnknownHostException, IOException {

@@ -42,12 +42,6 @@ Java_edu_umich_libpowertutor_EnergyEstimates_averagePowerConsumptionSinceReset
     return average_power_consumption_since_reset();
 }
 
-JNIEXPORT void JNICALL
-Java_edu_umich_libpowertutor_EnergyEstimates_resetStats(JNIEnv *jenv, jclass jclass)
-{
-    return reset_stats();
-}
-
 #ifdef __cplusplus
 }
 #endif
