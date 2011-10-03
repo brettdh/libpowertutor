@@ -12,4 +12,12 @@ public class EnergyEstimates {
     static {
         System.loadLibrary("powertutor");
     }
+
+    public static double convertBatteryPercentToJoules(double energyBudgetBatteryPercent) {
+        // TODO: sanity-check.
+        double charge = 1400.0 * energyBudgetBatteryPercent / 100.0; // mAh
+        double energy = charge * 4.0; // average voltage 4V;  mAh*V, or mWh
+        energy *= 3600; // mWs or mJ
+        return energy / 1000.0; // mJ to J
+    }
 }
