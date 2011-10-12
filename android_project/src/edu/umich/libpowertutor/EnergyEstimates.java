@@ -16,7 +16,7 @@ public class EnergyEstimates {
     public static double convertBatteryPercentToJoules(double energyBudgetBatteryPercent) {
         // TODO: sanity-check.
         double charge = 1400.0 * energyBudgetBatteryPercent / 100.0; // mAh
-        double energy = charge * 4.0; // average voltage 4V;  mAh*V, or mWh
+        double energy = charge * 3.7; // average voltage 3.7V for Li-Ion battery;  mAh*V, or mWh
         energy *= 3600; // mWs or mJ
         return energy / 1000.0; // mJ to J
     }
