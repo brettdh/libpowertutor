@@ -1,3 +1,4 @@
 *.pyc
 *~
 test_sending_estimation_server
+test_simulation

@@ -1,6 +1,8 @@
 #include <assert.h>
 #include "power_model.h"
 
+#include <stdlib.h>
+
 PowerModel * PowerModel::powerModels[NUM_POWER_MODELS];
 PowerModel::static_initer PowerModel::initer;
 

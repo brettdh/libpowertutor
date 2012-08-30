@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <map>
 #include <functional>
 
 #include <string.h>
@@ -26,7 +27,14 @@
 
 #include "debug.h"
 
+#include "mocktime.h"
+
 #define MOBILE_IFACE "rmnet0"
+
+#ifdef SIMULATION_BUILD
+// pretend we're on the handset
+#define ANDROID
+#endif
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream;
@@ -177,7 +185,7 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
 
     PthreadScopedLock lock(&mobile_state_lock);
     struct timeval now, diff;
-    gettimeofday(&now, NULL);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(last_mobile_sample_time, now, diff);
     down_bytes = mobile_last_delta_bytes[DOWN];
     up_bytes = mobile_last_delta_bytes[UP];
@@ -209,7 +217,7 @@ static inline double
 time_since(struct timeval then)
 {
     struct timeval dur, now;
-    TIME(now);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(then, now, dur);
     return dur.tv_sec + (((double)dur.tv_usec) / 1000000.0);
 }
@@ -397,7 +405,7 @@ time_fraction_in_state(MobileState state)
          total_time.tv_sec, total_time.tv_usec);
     
     struct timeval now, mobile_state_duration;
-    gettimeofday(&now, NULL);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(last_mobile_state_change, now, mobile_state_duration);
     if (state == mobile_state) {
         LOGD("Adding %lu.%06lu seconds in current state (%s)\n",
@@ -469,7 +477,7 @@ const int MAX_80211G_CHANNEL_RATE = 54;
 int
 wifi_channel_rate()
 {
-#ifdef ANDROID
+#if defined(ANDROID) && !defined(SIMULATION_BUILD)
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
@@ -533,8 +541,48 @@ static void store_counts(int *wifi_last, int *current)
 }
 #endif
 
+#ifdef SIMULATION_BUILD
+struct net_dev_stats {
+    int bytes[2];
+    int packets[2];
+};
+static std::map<std::string, struct net_dev_stats> mocked_net_dev_stats;
+
+void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2])
+{
+    std::string iface;
+    if (type == TYPE_MOBILE) {
+        iface = MOBILE_IFACE;
+    } else if (type == TYPE_WIFI) {
+        iface = powerModel->wifi_iface();
+    } else assert(0);
+
+    struct net_dev_stats stats;
+    for (size_t i = 0; i < 2; ++i) {
+        stats.bytes[i] = bytes[i];
+        stats.packets[i] = packets[i];
+    }
+    mocked_net_dev_stats[iface] = stats;
+}
+
+int get_mocked_net_dev_stats(const char *iface, int bytes[2], int packets[2])
+{
+    if (mocked_net_dev_stats.count(iface) == 0) {
+        struct net_dev_stats init_stats;
+        memset(&init_stats, 0, sizeof(init_stats));
+        mocked_net_dev_stats[iface] = init_stats;
+    }
+    
+    struct net_dev_stats stats = mocked_net_dev_stats[iface];
+    for (size_t i = 0; i < 2; ++i) {
+        bytes[i] = stats.bytes[i];
+        packets[i] = stats.packets[i];
+    }
+    return 0;
+}
+#else
 int
-get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
+get_net_dev_stats_from_proc(const char *iface, int bytes[2], int packets[2])
 {
     size_t iface_len = strlen(iface);
     
@@ -578,6 +626,16 @@ get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
     infile.close();
     return rc;
 }
+#endif
+
+int get_net_dev_stats(const char *iface, int bytes[2], int packets[2])
+{
+#ifdef SIMULATION_BUILD
+    return get_mocked_net_dev_stats(iface, bytes, packets);
+#else
+    return get_net_dev_stats_from_proc(iface, bytes, packets);
+#endif
+}
 
 #ifdef ANDROID
 int
@@ -590,7 +648,7 @@ update_wifi_estimated_rates(bool& fire_callback)
         return rc;
     }
 
-    TIME(now);
+    mocktime_gettimeofday(&now, NULL);
     PthreadScopedLock lock(&wifi_state_lock);
     TIMEDIFF(last_wifi_observation, now, diff);
     if (diff.tv_sec == 0) {
@@ -644,7 +702,7 @@ update_mobile_state(bool& fire_callback)
     MobileState last_state = mobile_state;
 
     struct timeval now, time_since_last_sample;
-    gettimeofday(&now, NULL);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(last_mobile_sample_time, now, time_since_last_sample);
 
     if (time_since_last_sample.tv_sec >= 1 && // only sample this data every second
@@ -652,11 +710,11 @@ update_mobile_state(bool& fire_callback)
          bytes[UP] > mobile_last_bytes[UP])) {
         // there's been activity recently,
         //  and the power state might have changed
-        gettimeofday(&last_mobile_sample_time, NULL);
+        mocktime_gettimeofday(&last_mobile_sample_time, NULL);
         if (mobile_last_bytes[DOWN] != -1) {
             // Make sure we have at least one prior observation
             
-            gettimeofday(&last_mobile_activity, NULL);
+            mocktime_gettimeofday(&last_mobile_activity, NULL);
             mobile_activity = true;
             
             // Hypothesis: PowerTutor checks the queue length simply by
@@ -710,7 +768,7 @@ update_mobile_state(bool& fire_callback)
                 // mark this state change as an "activity,"
                 //   so that we wait for the full FACH timeout
                 //   before going to IDLE.
-                gettimeofday(&last_mobile_activity, NULL);
+                mocktime_gettimeofday(&last_mobile_activity, NULL);
 
                 // We don't fire the activity callback as a result of this,
                 //   because it is the remote code's responsibility to 
@@ -740,7 +798,7 @@ update_mobile_state(bool& fire_callback)
                      &mobile_state_duration,
                      &time_in_mobile_state[last_state]);
         }
-        gettimeofday(&last_mobile_state_change, NULL);
+        mocktime_gettimeofday(&last_mobile_state_change, NULL);
     }
 
     // do this for the current state so that we catch the 'zero-idle'
@@ -772,17 +830,17 @@ update_remote_power_model()
     PthreadScopedLock lock(&remote_power_state_lock);
     double idle_time = time_since(remote_last_mobile_activity);
     if (remote_state.mobile_state == MOBILE_POWER_STATE_DCH) {
-        if (idle_time >= MOBILE_DCH_INACTIVITY_TIMER) {
+        if (idle_time >= powerModel->MOBILE_DCH_INACTIVITY_TIMER) {
             state_change = true;
             remote_state.mobile_state = MOBILE_POWER_STATE_FACH;
             
             // mark this state change as an "activity,"
             //   so that we wait for the full FACH timeout
             //   before going to IDLE.
-            gettimeofday(&remote_last_mobile_activity, NULL);
+            mocktime_gettimeofday(&remote_last_mobile_activity, NULL);
         }
     } else if (remote_state.mobile_state == MOBILE_POWER_STATE_FACH) {
-        if (idle_time >= MOBILE_FACH_INACTIVITY_TIMER) {
+        if (idle_time >= powerModel->MOBILE_FACH_INACTIVITY_TIMER) {
             state_change = true;
             remote_state.mobile_state = MOBILE_POWER_STATE_IDLE;
         }
@@ -810,10 +868,48 @@ int wifi_packet_rate();
 static void update_consumption_stats();
 
 #ifdef BUILDING_SHLIB
+#ifndef SIMULATION_BUILD
 static pthread_t update_thread;
 static pthread_mutex_t update_thread_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t update_thread_cv = PTHREAD_COND_INITIALIZER;
 static bool running = true;
+#endif
+
+void update_energy_stats()
+{
+#ifdef ANDROID
+    bool fire_callback = false;
+    int rc = update_wifi_estimated_rates(fire_callback);
+    if (rc < 0) {
+        LOGE("Warning: failed to update wifi stats\n");
+    }
+    rc = update_mobile_state(fire_callback);
+    if (rc < 0) {
+        LOGE("Warning: failed to update mobile state\n");
+    }
+    
+    if (fire_callback) {
+        activity_callback_t callback = get_activity_callback();
+        if (callback) {
+            struct remote_power_state state;
+            state.mobile_state = get_mobile_state();
+            get_mobile_queue_len(&state.mobile_queue_len[DOWN],
+                                 &state.mobile_queue_len[UP]);
+            state.wifi_packet_rate = wifi_packet_rate();
+            
+            callback(state);
+        }
+    }
+    update_consumption_stats();
+#else
+    // TODO: This could work on Android, too (handset-to-handset)
+    // TODO:  (but doesn't right now)
+    update_remote_power_model();
+#endif
+    
+}
+
+#ifndef SIMULATION_BUILD
 static void *
 NetworkStatsUpdateThread(void *)
 {
@@ -823,35 +919,7 @@ NetworkStatsUpdateThread(void *)
 
     PthreadScopedLock lock(&update_thread_lock);
     while (running) {
-#ifdef ANDROID
-        bool fire_callback = false;
-        int rc = update_wifi_estimated_rates(fire_callback);
-        if (rc < 0) {
-            LOGE("Warning: failed to update wifi stats\n");
-        }
-        rc = update_mobile_state(fire_callback);
-        if (rc < 0) {
-            LOGE("Warning: failed to update mobile state\n");
-        }
-        
-        if (fire_callback) {
-            activity_callback_t callback = get_activity_callback();
-            if (callback) {
-                struct remote_power_state state;
-                state.mobile_state = get_mobile_state();
-                get_mobile_queue_len(&state.mobile_queue_len[DOWN],
-                                     &state.mobile_queue_len[UP]);
-                state.wifi_packet_rate = wifi_packet_rate();
-                
-                callback(state);
-            }
-        }
-        update_consumption_stats();
-#else
-        // TODO: This could work on Android, too (handset-to-handset)
-        // TODO:  (but doesn't right now)
-        update_remote_power_model();
-#endif
+        update_energy_stats();
         
         wait_time = abs_time(interval);
         pthread_cond_timedwait(&update_thread_cv, &update_thread_lock, 
@@ -859,8 +927,8 @@ NetworkStatsUpdateThread(void *)
     }
     return NULL;
 }
+#endif
 
-static void reset_stats();
 
 static void libpowertutor_init() __attribute__((constructor));
 static void libpowertutor_init()
@@ -869,8 +937,10 @@ static void libpowertutor_init()
     powerModel = PowerModel::get(NEXUS_ONE);
 
     reset_stats();
-    gettimeofday(&last_mobile_state_change, NULL);
+    mocktime_gettimeofday(&last_mobile_state_change, NULL);
+    update_energy_stats();
     
+#ifndef SIMULATION_BUILD
     LOGD("Starting update thread\n");
     pthread_attr_t attr;
     pthread_attr_init(&attr);
@@ -880,15 +950,18 @@ static void libpowertutor_init()
     if (rc != 0) {
         LOGE("Warning: failed to create update thread!\n");
     }
+#endif
 }
 
 static void libpowertutor_fin() __attribute__((destructor));
 static void libpowertutor_fin()
 {
+#ifndef SIMULATION_BUILD
     LOGD("In libpowertutor_fin\n");
     PthreadScopedLock lock(&update_thread_lock);
     running = false;
     pthread_cond_signal(&update_thread_cv);
+#endif
 }
 #endif // BUILDING_SHLIB
 
@@ -960,7 +1033,7 @@ wifi_high_state(size_t datalen)
     int cur_packets = datalen / wifi_mtu();
     cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
     int packet_rate = wifi_packet_rate();
-    LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
+    //LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
     return (cur_packets + packet_rate) > powerModel->WIFI_PACKET_RATE_THRESHOLD;
 }
 
@@ -1026,18 +1099,19 @@ static struct timeval last_reset;
 static struct timeval last_update; // only accessed in NetworkStatsUpdateThread
 static int energy_consumed_mJ;
 
-static void reset_stats()
+void reset_stats()
 {
     PthreadScopedLock lock(&stats_lock);
-    gettimeofday(&last_reset, NULL);
+    mocktime_gettimeofday(&last_reset, NULL);
     last_update = last_reset;
     energy_consumed_mJ = 0;
 }
 
+#ifdef ANDROID
 static void update_consumption_stats()
 {
     struct timeval now, diff;
-    gettimeofday(&now, NULL);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(last_update, now, diff);
     if (diff.tv_sec <= 0) {
         // only update once per second
@@ -1060,6 +1134,7 @@ static void update_consumption_stats()
     PthreadScopedLock lock(&stats_lock);
     energy_consumed_mJ += energy_consumed_this_second_mJ;
 }
+#endif
 
 // returns estimated energy consumed by network interfaces since last reset, in mJ.
 int energy_consumed_since_reset()
@@ -1076,7 +1151,7 @@ int average_power_consumption_since_reset()
     PthreadScopedLock lock(&stats_lock);
     begin = last_reset;
 
-    gettimeofday(&now, NULL);
+    mocktime_gettimeofday(&now, NULL);
     TIMEDIFF(begin, now, diff);
     
     double seconds_since_reset = diff.tv_sec + ((double) diff.tv_usec) / 1000000.0;
@@ -1104,6 +1179,6 @@ void report_remote_mobile_activity(/* struct in_addr ip_addr, */
         // only update if the mobile queue lengths have changed,
         //  which indicates activity on the 3G interface.
         // If they are zero, this is just a wifi packet rate update.
-        gettimeofday(&remote_last_mobile_activity, NULL);
+        mocktime_gettimeofday(&remote_last_mobile_activity, NULL);
     }
 }

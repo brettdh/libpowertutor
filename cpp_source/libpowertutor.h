@@ -48,6 +48,8 @@ int energy_consumed_since_reset();
 // returns average power consumption by network interfaces since last reset, in mW.
 int average_power_consumption_since_reset();
 
+void reset_stats();
+
 
 struct remote_power_state {
     int mobile_state;
@@ -93,6 +95,11 @@ void register_mobile_activity_callback(activity_callback_t callback);
  */
 void report_remote_mobile_activity(/* struct in_addr ip_addr, */
                                    struct remote_power_state state);
+
+
+/* Mocking-related calls for simulation purposes */
+void update_energy_stats();
+void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2]);
 
 #ifdef __cplusplus
 }
