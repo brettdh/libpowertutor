@@ -5,12 +5,15 @@ all: libpowertutor_sim.so
 
 MOCKTIME_LDFLAGS :=  -lmocktime
 
-libpowertutor_sim.so: libpowertutor.cpp timeops.cpp power_model.cpp
-	g++ -o $@ $^ -g -O0 -Wall -Werror -shared -DBUILDING_SHLIB -DSIMULATION_BUILD -pthread $(MOCKTIME_LDFLAGS)
+SRCS := libpowertutor.cpp timeops.cpp power_model.cpp
+DEPS := debug.h libpowertutor.h pthread_util.h timeops.h utils.h
+
+libpowertutor_sim.so: $(SRCS) $(DEPS)
+	g++ -o $@ $(SRCS) -g -O0 -Wall -Werror -shared -DBUILDING_SHLIB -DSIMULATION_BUILD -pthread $(MOCKTIME_LDFLAGS)
 
 install:
 	-install libpowertutor_sim.so /usr/local/lib
 	-install libpowertutor.h /usr/local/include
 
 clean:
-	rm -f libpowertutor.so
+	rm -f libpowertutor.so libpowertutor_sim.so *.o *~

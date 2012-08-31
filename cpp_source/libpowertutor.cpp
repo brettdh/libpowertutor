@@ -333,6 +333,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
             
             fach_energy = duration * powerModel->MOBILE_FACH_POWER;
             int extend_energy = fach_duration * powerModel->MOBILE_FACH_POWER;
+            (void) extend_energy;
             LOGD("Extending FACH time by %f seconds (costs %d mJ)\n",
                  fach_duration, extend_energy);
         }
@@ -344,6 +345,7 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
         duration += dch_duration;
         dch_energy = duration * powerModel->MOBILE_DCH_POWER;
         int extend_energy = dch_duration * powerModel->MOBILE_DCH_POWER;
+        (void) extend_energy;
         LOGD("Extending DCH time by %f seconds (costs %d mJ)\n",
              dch_duration, extend_energy);
     }
@@ -1165,6 +1167,15 @@ void reset_stats()
     idle_duration_update_counts[0]
         = idle_duration_update_counts[1]
         = idle_duration_update_counts[2] = 1;
+
+    wifi_data_rates[0] = wifi_data_rates[1] = -1;
+    wifi_packet_rates[0] = wifi_packet_rates[1] = -1;
+
+#ifdef ANDROID
+    wifi_last_bytes[0] = wifi_last_bytes[1] = -1;
+    wifi_last_packets[0] = wifi_last_packets[1] = -1;
+    last_wifi_observation.tv_sec = last_wifi_observation.tv_usec = 0;
+#endif    
 
     mocked_net_dev_stats.clear();
     
