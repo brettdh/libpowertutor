@@ -77,7 +77,7 @@ static PowerModel *powerModel;
  *       can make those calculations.
  */
 
-enum dir {DOWN=0, UP};
+enum Direction {DOWN=0, UP};
 pthread_mutex_t mobile_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static MobileState mobile_state = MOBILE_POWER_STATE_IDLE;
 static struct timeval last_mobile_activity = {0, 0};
@@ -548,14 +548,19 @@ struct net_dev_stats {
 };
 static std::map<std::string, struct net_dev_stats> mocked_net_dev_stats;
 
-void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2])
+static std::string
+getNetworkIface(NetworkType type)
 {
-    std::string iface;
     if (type == TYPE_MOBILE) {
-        iface = MOBILE_IFACE;
+        return MOBILE_IFACE;
     } else if (type == TYPE_WIFI) {
-        iface = powerModel->wifi_iface();
+        return powerModel->wifi_iface();
     } else assert(0);
+}
+
+static void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2])
+{
+    std::string iface = getNetworkIface(type);
 
     struct net_dev_stats stats;
     for (size_t i = 0; i < 2; ++i) {
@@ -563,6 +568,42 @@ void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2])
         stats.packets[i] = packets[i];
     }
     mocked_net_dev_stats[iface] = stats;
+}
+
+enum BytesOrPackets { BYTES, PACKETS };
+
+static int get_mocked_net_dev_stats(const char *iface, int bytes[2], int packets[2]);
+
+static void add_value_to_array(NetworkType type, 
+                               BytesOrPackets bytes_or_packets, Direction direction, int value)
+{
+    std::string iface = getNetworkIface(type);
+
+    int array[4] = { 0, 0, 0, 0 };
+    int *arrays[2] = { &array[0], &array[2] };
+    get_mocked_net_dev_stats(iface.c_str(), arrays[0], arrays[1]);
+    arrays[bytes_or_packets][direction] += value;
+    set_mocked_net_dev_stats(type, arrays[0], arrays[1]);
+}
+
+void add_bytes_down(NetworkType type, int bytes)
+{
+    add_value_to_array(type, BYTES, DOWN, bytes);
+}
+
+void add_bytes_up(NetworkType type, int bytes)
+{
+    add_value_to_array(type, BYTES, UP, bytes);
+}
+
+void add_packets_down(NetworkType type, int packets)
+{
+    add_value_to_array(type, PACKETS, DOWN, packets);
+}
+
+void add_packets_up(NetworkType type, int packets)
+{
+    add_value_to_array(type, PACKETS, UP, packets);
 }
 
 int get_mocked_net_dev_stats(const char *iface, int bytes[2], int packets[2])
@@ -937,8 +978,6 @@ static void libpowertutor_init()
     powerModel = PowerModel::get(NEXUS_ONE);
 
     reset_stats();
-    mocktime_gettimeofday(&last_mobile_state_change, NULL);
-    update_energy_stats();
     
 #ifndef SIMULATION_BUILD
     LOGD("Starting update thread\n");
@@ -1105,6 +1144,32 @@ void reset_stats()
     mocktime_gettimeofday(&last_reset, NULL);
     last_update = last_reset;
     energy_consumed_mJ = 0;
+    
+    mobile_state = MOBILE_POWER_STATE_IDLE;
+    last_mobile_activity.tv_sec = last_mobile_activity.tv_usec = 0;
+    last_mobile_sample_time.tv_sec = last_mobile_sample_time.tv_usec = 0;
+    last_mobile_state_change.tv_sec = last_mobile_state_change.tv_usec = 0;
+    mobile_last_bytes[0] = mobile_last_bytes[1] = -1;
+    mobile_last_delta_bytes[0] = mobile_last_delta_bytes[1] = 0;
+
+    // start idle with a non-zero value so that the 
+    //  state weight calculation starts as 100% idle
+    time_in_mobile_state[0].tv_sec = 1;
+    time_in_mobile_state[0].tv_usec = 0;
+    time_in_mobile_state[1].tv_sec = time_in_mobile_state[1].tv_usec = 0;
+    time_in_mobile_state[2].tv_sec = time_in_mobile_state[2].tv_usec = 0;
+
+    idle_durations_per_state[0] 
+        = idle_durations_per_state[1]
+        = idle_durations_per_state[2] = 0.0;
+    idle_duration_update_counts[0]
+        = idle_duration_update_counts[1]
+        = idle_duration_update_counts[2] = 1;
+
+    mocked_net_dev_stats.clear();
+    
+    mocktime_gettimeofday(&last_mobile_state_change, NULL);
+    update_energy_stats();
 }
 
 #ifdef ANDROID

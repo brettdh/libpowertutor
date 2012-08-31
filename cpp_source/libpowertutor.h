@@ -99,7 +99,10 @@ void report_remote_mobile_activity(/* struct in_addr ip_addr, */
 
 /* Mocking-related calls for simulation purposes */
 void update_energy_stats();
-void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2]);
+void add_bytes_down(NetworkType type, int bytes);
+void add_bytes_up(NetworkType type, int bytes);
+void add_packets_down(NetworkType type, int packets);
+void add_packets_up(NetworkType type, int packets);
 
 #ifdef __cplusplus
 }

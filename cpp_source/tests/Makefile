@@ -8,4 +8,4 @@ test_simulation: run_simulation_test.cpp
 	g++ -o $@ $^ -g -O0 -Wall -Werror -I.. -L.. -lpowertutor_sim -lcppunit
 
 clean:
-	rm -f test_sending_estimation_server
+	rm -f test_sending_estimation_server test_simulation

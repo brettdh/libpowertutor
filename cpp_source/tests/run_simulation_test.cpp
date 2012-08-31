@@ -53,8 +53,8 @@ class SimulationTest : public CppUnit::TestFixture {
     }
 
     void testCellularNetworkEnergy() {
-        int bytes[2] = {0, 500}, packets[2] = {0, 1};
-        set_mocked_net_dev_stats(TYPE_MOBILE, bytes, packets);
+        add_bytes_up(TYPE_MOBILE, 500);
+        add_packets_up(TYPE_MOBILE, 1);
         mocktime_usleep(1000000);
         update_energy_stats();
         
@@ -74,8 +74,8 @@ class SimulationTest : public CppUnit::TestFixture {
     }
 
     void testWifiNetworkEnergy() {
-        int bytes[2] = {0, 50000}, packets[2] = {0, 50};
-        set_mocked_net_dev_stats(TYPE_WIFI, bytes, packets);
+        add_bytes_up(TYPE_WIFI, 50000);
+        add_packets_up(TYPE_WIFI, 50);
         mocktime_usleep(1000000);
         update_energy_stats();
 
