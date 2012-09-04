@@ -98,6 +98,7 @@ void report_remote_mobile_activity(/* struct in_addr ip_addr, */
 
 
 /* Mocking-related calls for simulation purposes */
+void libpowertutor_init_mocking();
 void update_energy_stats();
 void add_bytes_down(NetworkType type, int bytes);
 void add_bytes_up(NetworkType type, int bytes);

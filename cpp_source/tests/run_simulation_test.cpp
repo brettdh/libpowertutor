@@ -15,6 +15,7 @@ class SimulationTest : public CppUnit::TestFixture {
     CPPUNIT_TEST(testIdleNetworkEnergy);
     CPPUNIT_TEST(testCellularNetworkEnergy);
     CPPUNIT_TEST(testWifiNetworkEnergy);
+    CPPUNIT_TEST(testReset);
     CPPUNIT_TEST_SUITE_END();
     
     void makePowerModelIdle() {
@@ -28,19 +29,16 @@ class SimulationTest : public CppUnit::TestFixture {
     void setUp() {
         mocktime_enable_mocking();
         
-        if (start.tv_sec == 0) {
-            gettimeofday(&start, NULL);
-        }
-        mocktime_settimeofday(&start, NULL);
-        
-        reset_stats();
+        libpowertutor_init_mocking();
     }
 
     void tearDown() {
-        mocktime_gettimeofday(&start, NULL);
+        //mocktime_gettimeofday(&start, NULL);
     }
     
     void testIdleNetworkEnergy() {
+        reset_stats();
+        
         int energy_mJ = energy_consumed_since_reset();
         CPPUNIT_ASSERT_EQUAL(0, energy_mJ);
 
@@ -89,6 +87,14 @@ class SimulationTest : public CppUnit::TestFixture {
         energy_mJ = energy_consumed_since_reset() - energy_mJ;
         CPPUNIT_ASSERT(energy_mJ > 0);
         CPPUNIT_ASSERT(energy_mJ < 100); // wifi-low consumption
+    }
+
+    void testReset() {
+        testWifiNetworkEnergy();
+
+        libpowertutor_init_mocking();
+        
+        testWifiNetworkEnergy();
     }
     
   private:

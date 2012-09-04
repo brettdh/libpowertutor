@@ -1142,44 +1142,59 @@ static int energy_consumed_mJ;
 
 void reset_stats()
 {
-    PthreadScopedLock lock(&stats_lock);
-    mocktime_gettimeofday(&last_reset, NULL);
-    last_update = last_reset;
-    energy_consumed_mJ = 0;
+    {
+        PthreadScopedLock lock(&stats_lock);
+        mocktime_gettimeofday(&last_reset, NULL);
+        last_update = last_reset;
+        energy_consumed_mJ = 0;
     
-    mobile_state = MOBILE_POWER_STATE_IDLE;
-    last_mobile_activity.tv_sec = last_mobile_activity.tv_usec = 0;
-    last_mobile_sample_time.tv_sec = last_mobile_sample_time.tv_usec = 0;
-    last_mobile_state_change.tv_sec = last_mobile_state_change.tv_usec = 0;
-    mobile_last_bytes[0] = mobile_last_bytes[1] = -1;
-    mobile_last_delta_bytes[0] = mobile_last_delta_bytes[1] = 0;
+        mobile_state = MOBILE_POWER_STATE_IDLE;
+        last_mobile_activity.tv_sec = last_mobile_activity.tv_usec = 0;
+        last_mobile_sample_time.tv_sec = last_mobile_sample_time.tv_usec = 0;
+        last_mobile_state_change.tv_sec = last_mobile_state_change.tv_usec = 0;
+        mobile_last_bytes[0] = mobile_last_bytes[1] = -1;
+        mobile_last_delta_bytes[0] = mobile_last_delta_bytes[1] = 0;
 
-    // start idle with a non-zero value so that the 
-    //  state weight calculation starts as 100% idle
-    time_in_mobile_state[0].tv_sec = 1;
-    time_in_mobile_state[0].tv_usec = 0;
-    time_in_mobile_state[1].tv_sec = time_in_mobile_state[1].tv_usec = 0;
-    time_in_mobile_state[2].tv_sec = time_in_mobile_state[2].tv_usec = 0;
+        // start idle with a non-zero value so that the 
+        //  state weight calculation starts as 100% idle
+        time_in_mobile_state[0].tv_sec = 1;
+        time_in_mobile_state[0].tv_usec = 0;
+        time_in_mobile_state[1].tv_sec = time_in_mobile_state[1].tv_usec = 0;
+        time_in_mobile_state[2].tv_sec = time_in_mobile_state[2].tv_usec = 0;
 
-    idle_durations_per_state[0] 
-        = idle_durations_per_state[1]
-        = idle_durations_per_state[2] = 0.0;
-    idle_duration_update_counts[0]
-        = idle_duration_update_counts[1]
-        = idle_duration_update_counts[2] = 1;
+        idle_durations_per_state[0] 
+            = idle_durations_per_state[1]
+            = idle_durations_per_state[2] = 0.0;
+        idle_duration_update_counts[0]
+            = idle_duration_update_counts[1]
+            = idle_duration_update_counts[2] = 1;
 
-    wifi_data_rates[0] = wifi_data_rates[1] = -1;
-    wifi_packet_rates[0] = wifi_packet_rates[1] = -1;
+        wifi_data_rates[0] = wifi_data_rates[1] = -1;
+        wifi_packet_rates[0] = wifi_packet_rates[1] = -1;
 
 #ifdef ANDROID
-    wifi_last_bytes[0] = wifi_last_bytes[1] = -1;
-    wifi_last_packets[0] = wifi_last_packets[1] = -1;
-    last_wifi_observation.tv_sec = last_wifi_observation.tv_usec = 0;
+        wifi_last_bytes[0] = wifi_last_bytes[1] = -1;
+        wifi_last_packets[0] = wifi_last_packets[1] = -1;
+        last_wifi_observation.tv_sec = last_wifi_observation.tv_usec = 0;
 #endif    
 
-    mocked_net_dev_stats.clear();
+        mocked_net_dev_stats.clear();
     
-    mocktime_gettimeofday(&last_mobile_state_change, NULL);
+        mocktime_gettimeofday(&last_mobile_state_change, NULL);
+        update_energy_stats();
+    }
+}
+
+void libpowertutor_init_mocking()
+{
+    mocktime_enable_mocking();
+
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    mocktime_settimeofday(&now, NULL);
+
+    reset_stats();
+    mocktime_usleep(1000000);
     update_energy_stats();
 }
 
