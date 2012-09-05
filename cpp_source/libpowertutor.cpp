@@ -1189,8 +1189,7 @@ void libpowertutor_init_mocking()
 {
     mocktime_enable_mocking();
 
-    struct timeval now;
-    gettimeofday(&now, NULL);
+    struct timeval now = {0, 0};
     mocktime_settimeofday(&now, NULL);
 
     reset_stats();
