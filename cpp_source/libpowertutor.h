@@ -45,6 +45,9 @@ int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 // returns estimated energy consumed by network interfaces since last reset, in mJ.
 int energy_consumed_since_reset();
 
+// return the number of bytes sent on a cellular interface since last reset.
+int mobile_bytes_consumed_since_reset();
+
 // returns average power consumption by network interfaces since last reset, in mW.
 int average_power_consumption_since_reset();
 

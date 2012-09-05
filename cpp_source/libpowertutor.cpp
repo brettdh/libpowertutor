@@ -549,6 +549,7 @@ struct net_dev_stats {
     int packets[2];
 };
 static std::map<std::string, struct net_dev_stats> mocked_net_dev_stats;
+static pthread_mutex_t mocked_net_dev_stats_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static std::string
 getNetworkIface(NetworkType type)
@@ -562,6 +563,8 @@ getNetworkIface(NetworkType type)
 
 static void set_mocked_net_dev_stats(NetworkType type, int bytes[2], int packets[2])
 {
+    PthreadScopedLock lock(&mocked_net_dev_stats_lock);
+
     std::string iface = getNetworkIface(type);
 
     struct net_dev_stats stats;
@@ -610,6 +613,8 @@ void add_packets_up(NetworkType type, int packets)
 
 int get_mocked_net_dev_stats(const char *iface, int bytes[2], int packets[2])
 {
+    PthreadScopedLock lock(&mocked_net_dev_stats_lock);
+
     if (mocked_net_dev_stats.count(iface) == 0) {
         struct net_dev_stats init_stats;
         memset(&init_stats, 0, sizeof(init_stats));
@@ -1231,6 +1236,15 @@ int energy_consumed_since_reset()
 {
     PthreadScopedLock lock(&stats_lock);
     return energy_consumed_mJ;
+}
+
+int mobile_bytes_consumed_since_reset()
+{
+    PthreadScopedLock lock(&stats_lock);
+    int bytes[2] = {0, 0}, dummy[2];
+    int rc = get_net_dev_stats(MOBILE_IFACE, bytes, dummy);
+    assert(rc == 0);
+    return bytes[0] + bytes[1];
 }
 
 // returns average power consumption by network interfaces since last reset, in mW.
