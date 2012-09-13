@@ -18,6 +18,7 @@
 #include <float.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include "pthread_util.h"
 
 #include "libpowertutor.h"
@@ -37,7 +38,7 @@
 #endif
 
 using std::ifstream; using std::hex; using std::string;
-using std::istringstream;
+using std::istringstream; using std::ostringstream;
 using std::min; using std::max;
 
 static const int TCP_HDR_SIZE = 32;
@@ -1143,7 +1144,8 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
 static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct timeval last_reset;
 static struct timeval last_update; // only accessed in NetworkStatsUpdateThread
-static int energy_consumed_mJ;
+static int energy_consumed_mJ = 0;
+static int mobile_data_consumed_bytes = 0;
 
 void reset_stats()
 {
@@ -1152,6 +1154,7 @@ void reset_stats()
         mocktime_gettimeofday(&last_reset, NULL);
         last_update = last_reset;
         energy_consumed_mJ = 0;
+        mobile_data_consumed_bytes = 0;
     
         mobile_state = MOBILE_POWER_STATE_IDLE;
         last_mobile_activity.tv_sec = last_mobile_activity.tv_usec = 0;
@@ -1192,14 +1195,38 @@ void reset_stats()
 
 void libpowertutor_init_mocking()
 {
+    // assume that the caller has done this already.
+    //  we just start from whatever mock time is already set.
+    /*
     mocktime_enable_mocking();
 
     struct timeval now = {0, 0};
     mocktime_settimeofday(&now, NULL);
+    */
 
     reset_stats();
     mocktime_usleep(1000000);
     update_energy_stats();
+}
+
+static void logPrint(const char *fmt, ...)
+{
+    static const char *LOGFILE_NAME = "/tmp/libpowertutor.log";
+    FILE *logfile = fopen(LOGFILE_NAME, "a");
+    if (logfile) {
+        ostringstream oss;
+        struct timeval now;
+        mocktime_gettimeofday(&now, NULL);
+        oss << ((now.tv_sec * 1000) + (now.tv_usec / 1000))
+            << " " << fmt;
+        
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(logfile, oss.str().c_str(), ap);
+        va_end(ap);
+        
+        fclose(logfile);
+    }
 }
 
 #ifdef ANDROID
@@ -1228,6 +1255,10 @@ static void update_consumption_stats()
 
     PthreadScopedLock lock(&stats_lock);
     energy_consumed_mJ += energy_consumed_this_second_mJ;
+    mobile_data_consumed_bytes += (mobile_last_delta_bytes[0] +
+                                   mobile_last_delta_bytes[1]);
+    //logPrint("Total energy: %d mJ   Total data: %d bytes\n",
+    //         energy_consumed_mJ, mobile_data_consumed_bytes);
 }
 #endif
 
@@ -1241,10 +1272,7 @@ int energy_consumed_since_reset()
 int mobile_bytes_consumed_since_reset()
 {
     PthreadScopedLock lock(&stats_lock);
-    int bytes[2] = {0, 0}, dummy[2];
-    int rc = get_net_dev_stats(MOBILE_IFACE, bytes, dummy);
-    assert(rc == 0);
-    return bytes[0] + bytes[1];
+    return mobile_data_consumed_bytes;
 }
 
 // returns average power consumption by network interfaces since last reset, in mW.
