@@ -20,10 +20,14 @@ using std::vector; using std::min;
 #include "../pthread_util.h"
 
 static const short TEST_PORT = 4242;
+//static const char *WIFI_IFACE_NAME = "tiwlan0";
+static const char *WIFI_IFACE_NAME = "eth0";
 
 #ifdef ANDROID
 #define LOG_TAG "test_sending_estimation"
-#include <cutils/log.h>
+#include <android/log.h>
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #else
 #define LOGD printf
 #define LOGE(...) fprintf(stderr, __VA_ARGS__)
@@ -373,7 +377,7 @@ static int
 connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
 {
     struct sockaddr_in *local_inaddr = (struct sockaddr_in *) local_addr;
-    const char *default_host = "141.212.110.132";
+    const char *default_host = "141.212.113.120";
     
     if (!remote_host) {
         remote_host = default_host;
@@ -419,13 +423,14 @@ connect_sock(struct sockaddr *local_addr, const char *remote_host = NULL)
     struct timeval begin, end, diff;
     gettimeofday(&begin, NULL);
     rc = connect(sock, (struct sockaddr *) &remote_addr, socklen);
+    int saved_errno = errno;
     gettimeofday(&end, NULL);
     TIMEDIFF(begin, end, diff);
     LOGD("connect() from %s returned after %lu.%06lu seconds\n",
          inet_ntoa(local_inaddr->sin_addr), diff.tv_sec, diff.tv_usec);
     if (rc < 0) {
         LOGE("Failed to connect to %s:%d (%s)\n", 
-             remote_host, TEST_PORT, strerror(errno));
+             remote_host, TEST_PORT, strerror(saved_errno));
         close(sock);
         return -1;
     }
@@ -573,7 +578,7 @@ int main(int argc, char *argv[])
     }
     
     rc = get_ip_addr("rmnet0", &mobile_addr.sin_addr);
-    rc += get_ip_addr("tiwlan0", &wifi_addr.sin_addr);
+    rc += get_ip_addr(WIFI_IFACE_NAME, &wifi_addr.sin_addr);
     if (rc != 0) {
         return -1;
     }

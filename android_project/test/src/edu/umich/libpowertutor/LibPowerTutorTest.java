@@ -9,6 +9,7 @@ import android.test.InstrumentationTestCase;
 import android.util.Log;
 
 public class LibPowerTutorTest extends InstrumentationTestCase {
+    private static final String SPEEDTEST_SERVER_IP = "141.212.113.120";
     private static final String TAG = LibPowerTutorTest.class.getName();
 
     @Override
@@ -57,7 +58,7 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         
         downloadBytesForDuration(3000);
         int transferEnergy = EnergyEstimates.energyConsumedSinceReset() - energyStart;
-        assertTrue(transferEnergy > 1000);
+        assertTrue(transferEnergy > 1000); // XXX: this depends on the data being sent on 3G.
         
         int transferPower = EnergyEstimates.averagePowerConsumptionSinceReset();
         assertTrue(transferPower > 300);
@@ -65,7 +66,7 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
 
     private void downloadBytesForDuration(int durationMillis) throws UnknownHostException,
             IOException {
-        Socket socket = new Socket("141.212.110.132", 4321);
+        Socket socket = new Socket(SPEEDTEST_SERVER_IP, 4321);
         InputStream in = socket.getInputStream();
         byte[] buf = new byte[4096];
         long begin_ms = System.currentTimeMillis();
@@ -97,7 +98,7 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
         // current energy estimate should not contain tail time,
         //  so it will be much less
         energy = EnergyEstimates.estimateMobileEnergyCost(1, 1000, 1);
-        assertTrue(avgEnergy > energy);
+        assertTrue(avgEnergy > energy); // XXX: this depends on the data being sent on 3G.
         assertTrue((avgEnergy - energy) > 1000);
         
         downloadBytesForDuration(8000);
@@ -150,7 +151,7 @@ public class LibPowerTutorTest extends InstrumentationTestCase {
     }
 
     private void downloadBytes(int bytes) throws UnknownHostException, IOException {
-        Socket socket = new Socket("141.212.110.132", 4321);
+        Socket socket = new Socket(SPEEDTEST_SERVER_IP, 4321);
         InputStream in = socket.getInputStream();
         byte[] buf = new byte[bytes];
         in.read(buf);

@@ -440,6 +440,8 @@ static void update_idle_duration_for_state(MobileState state, double idle_durati
     // must already be holding mobile_state_lock
     idle_durations_per_state[state] += idle_duration;
     idle_duration_update_counts[state]++;
+    //LOGD("Updated idle duration for state %s: now %f\n", mobile_state_str[state], 
+    //     idle_durations_per_state[state]);
 }
 #endif
 
@@ -482,7 +484,7 @@ const int MAX_80211G_CHANNEL_RATE = 54;
 int
 wifi_channel_rate()
 {
-#if defined(ANDROID) && !defined(SIMULATION_BUILD)
+#if 0 /* doesn't work anymore *//* defined(ANDROID) && !defined(SIMULATION_BUILD) */
     /* Adapted from 
      * $(MY_DROID)/frameworks/base/core/jni/android_net_wifi_Wifi.cpp 
      */
@@ -745,7 +747,7 @@ update_mobile_state(bool& fire_callback)
     if (rc < 0) {
         return rc;
     }
-    
+
     bool state_change = false;
     bool mobile_activity = false;
     
@@ -811,6 +813,7 @@ update_mobile_state(bool& fire_callback)
 
         // check to see if a timeout expired
         double idle_time = time_since_last_mobile_activity(true);
+        //LOGD("Checking for state change; idle time=%f\n", idle_time);
         if (mobile_state == MOBILE_POWER_STATE_DCH) {
             if (idle_time >= powerModel->MOBILE_DCH_INACTIVITY_TIMER) {
                 state_change = true;
@@ -864,6 +867,7 @@ update_mobile_state(bool& fire_callback)
     //      state at that moment.
     double last_idle_duration = time_since_last_mobile_activity(true);
     update_idle_duration_for_state(mobile_state, last_idle_duration);
+    // XXX: this is broken; it double-counts a lot.
     
     if (mobile_activity) {
         fire_callback = true;
@@ -972,6 +976,7 @@ NetworkStatsUpdateThread(void *)
     struct timespec wait_time;
 
     PthreadScopedLock lock(&update_thread_lock);
+    LOGD("Update thread running\n");
     while (running) {
         update_energy_stats();
         
@@ -1189,6 +1194,7 @@ void reset_stats()
         wifi_last_bytes[0] = wifi_last_bytes[1] = -1;
         wifi_last_packets[0] = wifi_last_packets[1] = -1;
         last_wifi_observation.tv_sec = last_wifi_observation.tv_usec = 0;
+        mocktime_gettimeofday(&last_wifi_observation, NULL);
 #endif    
 
 #ifdef SIMULATION_BUILD
@@ -1196,6 +1202,8 @@ void reset_stats()
 #endif
     
         mocktime_gettimeofday(&last_mobile_state_change, NULL);
+        mocktime_gettimeofday(&last_mobile_sample_time, NULL);
+        mocktime_gettimeofday(&last_mobile_activity, NULL);
         update_energy_stats();
     }
 }

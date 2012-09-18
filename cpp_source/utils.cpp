@@ -33,7 +33,7 @@ get_ip_addr(const char *ifname, struct in_addr *ip_addr)
         struct sockaddr_in *inaddr = (struct sockaddr_in*)&ifr.ifr_addr;
         memcpy(ip_addr, &inaddr->sin_addr, sizeof(ip_addr));
     } else {
-        LOGE("getting ip addr: ioctl: %s\n", strerror(errno));
+        LOGE("getting ip addr for %s: ioctl: %s\n", ifname, strerror(errno));
     }
 
     close(sock);
