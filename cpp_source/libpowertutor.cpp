@@ -434,12 +434,14 @@ time_fraction_in_state(MobileState state)
     return state_time_secs / total_time_secs;
 }
 
+#ifdef ANDROID
 static void update_idle_duration_for_state(MobileState state, double idle_duration)
 {
     // must already be holding mobile_state_lock
     idle_durations_per_state[state] += idle_duration;
     idle_duration_update_counts[state]++;
 }
+#endif
 
 static double average_idle_duration_for_state(MobileState state)
 {
@@ -914,7 +916,10 @@ update_remote_power_model()
 #endif
 
 int wifi_packet_rate();
+
+#ifdef ANDROID
 static void update_consumption_stats();
+#endif
 
 #ifdef BUILDING_SHLIB
 #ifndef SIMULATION_BUILD
@@ -1186,7 +1191,9 @@ void reset_stats()
         last_wifi_observation.tv_sec = last_wifi_observation.tv_usec = 0;
 #endif    
 
+#ifdef SIMULATION_BUILD
         mocked_net_dev_stats.clear();
+#endif
     
         mocktime_gettimeofday(&last_mobile_state_change, NULL);
         update_energy_stats();
@@ -1209,7 +1216,7 @@ void libpowertutor_init_mocking()
     update_energy_stats();
 }
 
-static void logPrint(const char *fmt, ...)
+void logPrint(const char *fmt, ...)
 {
     static const char *LOGFILE_NAME = "/tmp/libpowertutor.log";
     FILE *logfile = fopen(LOGFILE_NAME, "a");
