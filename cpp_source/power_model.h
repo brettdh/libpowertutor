@@ -43,6 +43,8 @@ struct PowerModel {
 
     virtual const char *wifi_iface() = 0;
 
+    virtual ~PowerModel() {}
+
 protected:
     PowerModel() {}
     virtual void init() = 0;
