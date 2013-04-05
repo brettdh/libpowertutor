@@ -2,7 +2,7 @@ all: libpowertutor.so libpowertutor_sim.so
 
 MOCKTIME_LDFLAGS :=  -lmocktime
 
-SRCS := libpowertutor.cpp timeops.cpp power_model.cpp
+SRCS := libpowertutor.cpp timeops.cpp power_model.cpp debug.cpp
 DEPS := debug.h libpowertutor.h pthread_util.h timeops.h utils.h
 
 libpowertutor.so: $(SRCS) $(DEPS)
