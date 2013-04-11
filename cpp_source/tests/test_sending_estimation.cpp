@@ -21,7 +21,9 @@ using std::vector; using std::min;
 
 static const short TEST_PORT = 4242;
 //static const char *WIFI_IFACE_NAME = "tiwlan0";
+#ifndef SERVER_ONLY
 static const char *WIFI_IFACE_NAME = "eth0";
+#endif
 
 #ifdef ANDROID
 #define LOG_TAG "test_sending_estimation"

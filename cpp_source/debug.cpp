@@ -19,6 +19,8 @@ using std::setw; using std::setfill;
 #  else
 #  include <cutils/logd.h>
 #  endif
+#else
+#define LIBPT_LOGFILE "/tmp/libpowertutor_server.log"
 #endif
 
 pthread_key_t thread_name_key;
@@ -71,7 +73,7 @@ static void vdbgprintf(bool plain, const char *fmt, va_list ap)
     string fmtstr(stream.str());
     fmtstr += fmt;
     
-#ifdef ANDROID
+#ifndef SIMULATION_BUILD
     FILE *out = fopen(LIBPT_LOGFILE, "a");
     if (out) {
         vfprintf(out, fmtstr.c_str(), ap);
@@ -83,10 +85,12 @@ static void vdbgprintf(bool plain, const char *fmt, va_list ap)
                << strerror(e) << " ** " << fmtstr;
         fmtstr = stream.str();
         
+#ifdef ANDROID
         __android_log_vprint(ANDROID_LOG_INFO, "libpowertutor", fmtstr.c_str(), ap);
-    }
 #else
     vfprintf(stderr, fmtstr.c_str(), ap);
+#endif
+    }
 #endif
 }
 
