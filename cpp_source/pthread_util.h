@@ -283,7 +283,7 @@ class LockingMap {
         }
         void release() {
             if (my_node) {
-                //dbgprintf("Releasing lock %p\n", &my_node->lock);
+                //libpowertutor::dbgprintf("Releasing lock %p\n", &my_node->lock);
                 int rc;
                 if (writer) {
                     rc = RWLOCK_WRUNLOCK(&my_node->lock);
@@ -446,7 +446,7 @@ bool LockingMap<KeyType,ValueType,ordering>::insert(accessor& ac, const KeyType&
         target = the_map[key];
     }
 
-    //dbgprintf("Grabbing writelock %p\n", &target->lock);
+    //libpowertutor::dbgprintf("Grabbing writelock %p\n", &target->lock);
     int rc = RWLOCK_WRLOCK(&target->lock);
     PTHREAD_ASSERT_SUCCESS(rc);
     ac.my_node = target;
@@ -466,7 +466,7 @@ bool LockingMap<KeyType,ValueType,ordering>::find(const_accessor& ac, const KeyT
 
         target = the_map[key];
     }
-    //dbgprintf("Grabbing readlock %p\n", &target->lock);
+    //libpowertutor::dbgprintf("Grabbing readlock %p\n", &target->lock);
     int rc = RWLOCK_RDLOCK(&target->lock);
     PTHREAD_ASSERT_SUCCESS(rc);
 
@@ -487,7 +487,7 @@ bool LockingMap<KeyType,ValueType,ordering>::find(accessor& ac, const KeyType& k
         
         target = the_map[key];
     }
-    //dbgprintf("Grabbing writelock %p\n", &target->lock);
+    //libpowertutor::dbgprintf("Grabbing writelock %p\n", &target->lock);
     int rc = RWLOCK_WRLOCK(&target->lock);
     PTHREAD_ASSERT_SUCCESS(rc);
     ac.my_node = target;

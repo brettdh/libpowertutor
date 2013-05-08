@@ -94,7 +94,8 @@ static void vdbgprintf(bool plain, const char *fmt, va_list ap)
 #endif
 }
 
-void dbgprintf(const char *fmt, ...)
+
+void libpowertutor::dbgprintf(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
