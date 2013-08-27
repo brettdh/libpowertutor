@@ -23,6 +23,7 @@ using std::setw; using std::setfill;
 #define LIBPT_LOGFILE "/tmp/libpowertutor_server.log"
 #endif
 
+#ifdef LOGGING_ENABLED
 pthread_key_t thread_name_key;
 static pthread_once_t key_once = PTHREAD_ONCE_INIT;
 
@@ -102,3 +103,4 @@ void libpowertutor::dbgprintf(const char *fmt, ...)
     vdbgprintf(false, fmt, ap);
     va_end(ap);
 }
+#endif // LOGGING_ENABLED

@@ -1148,6 +1148,15 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     return -1;
 }
 
+EnergyComputer get_energy_computer(NetworkType type)
+{
+    return [](size_t datalen, size_t bandwidth, size_t rtt_ms) {
+        // TODO: implement
+        return 0;
+    };
+}
+
+
 
 // these functions deal with the energy-consumption stats for the modeled networks.
 

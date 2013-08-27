@@ -2,7 +2,9 @@
 #define LIBPOWERTUTOR_H_NYF9WXHP
 
 #ifdef __cplusplus
-extern "C" {
+#define CDECL extern "C"
+#else
+#define CDECL
 #endif
 
 #include <sys/types.h>
@@ -30,28 +32,39 @@ extern const char *mobile_state_str[];
  * XXX:  since I might need a lot of detail to make good decisions,
  * XXX:  and a simple abstraction might not be powerful enough.
  */
-int estimate_energy_cost(NetworkType type, size_t datalen, 
-                         size_t bandwidth, size_t rtt_ms);
+CDECL int estimate_energy_cost(NetworkType type, size_t datalen, 
+                               size_t bandwidth, size_t rtt_ms);
 
-int estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
+CDECL int estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
 // ignore the current power state of the radio and 
 //  return the cost considering the average power state.
-int estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwidth, size_t avg_rtt_ms);
+CDECL int estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwidth, size_t avg_rtt_ms);
 
-int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
+CDECL int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
+#ifdef __cplusplus
+#include <functional>
+typedef std::function<int(size_t, size_t, size_t)> EnergyComputer;
+
+// returns a functor that takes (datalen, bandwidth, rtt_ms) and returns
+// an energy estimate in mJ.  Binds the current energy state to all invocations
+//  of this functor, so that a tight loop can calculate those values once
+//  outside the loop body and reuse them in the loop body.
+//  This should hopefully save computation time.
+EnergyComputer get_energy_computer(NetworkType type);
+#endif
 
 // returns estimated energy consumed by network interfaces since last reset, in mJ.
-int energy_consumed_since_reset();
+CDECL int energy_consumed_since_reset();
 
 // return the number of bytes sent on a cellular interface since last reset.
-int mobile_bytes_consumed_since_reset();
+CDECL int mobile_bytes_consumed_since_reset();
 
 // returns average power consumption by network interfaces since last reset, in mW.
-int average_power_consumption_since_reset();
+CDECL int average_power_consumption_since_reset();
 
-void reset_stats();
+CDECL void reset_stats();
 
 
 struct remote_power_state {
@@ -71,7 +84,7 @@ typedef void (*activity_callback_t)(struct remote_power_state);
  * ---------------------------------------------------------------------------
 */
 /* REQ: callbacks must not block or take a long time. */
-void register_mobile_activity_callback(activity_callback_t callback);
+CDECL void register_mobile_activity_callback(activity_callback_t callback);
 
 
 #include <netinet/in.h>
@@ -96,20 +109,16 @@ void register_mobile_activity_callback(activity_callback_t callback);
 /* TODO: the ip_addr argument will be used later to maintain power models
  * for multiple remote handsets.
  */
-void report_remote_mobile_activity(/* struct in_addr ip_addr, */
-                                   struct remote_power_state state);
+CDECL void report_remote_mobile_activity(/* struct in_addr ip_addr, */
+                                         struct remote_power_state state);
 
 
 /* Mocking-related calls for simulation purposes */
-void libpowertutor_init_mocking();
-void update_energy_stats();
-void add_bytes_down(NetworkType type, int bytes);
-void add_bytes_up(NetworkType type, int bytes);
-void add_packets_down(NetworkType type, int packets);
-void add_packets_up(NetworkType type, int packets);
-
-#ifdef __cplusplus
-}
-#endif
+CDECL void libpowertutor_init_mocking();
+CDECL void update_energy_stats();
+CDECL void add_bytes_down(NetworkType type, int bytes);
+CDECL void add_bytes_up(NetworkType type, int bytes);
+CDECL void add_packets_down(NetworkType type, int packets);
+CDECL void add_packets_up(NetworkType type, int packets);
 
 #endif /* end of include guard: LIBPOWERTUTOR_H_NYF9WXHP */
