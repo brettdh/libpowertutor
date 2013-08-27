@@ -20,7 +20,7 @@ int main()
         fprintf(stderr, "  cost: %d mJ    functor-cost: %d mJ\n",
                 cost, functor_cost);
 
-        const int NUM_CALLS = 300;
+        const int NUM_CALLS = 30000;
         struct timeval begin, end, normal_diff, functor_diff;
         int total = 0;
         TIME(begin);
