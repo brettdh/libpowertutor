@@ -9,7 +9,7 @@
 
 #include <sys/types.h>
 
-enum NetworkType {
+CDECL enum NetworkType {
     TYPE_MOBILE = 0,
     TYPE_WIFI   = 1
 };

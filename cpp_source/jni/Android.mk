@@ -7,7 +7,7 @@ ANDROID_INCLUDES += $(HOME)/src/android-ndk-r8b/sources/
 ANDROID_INCLUDES += $(MY_ANDROID_SRC_ROOT)/external/bdh_apps/mocktime/
 
 MY_SRCS := libpowertutor.cpp power_model.cpp timeops.cpp utils.cpp jni_wrappers.cpp debug.cpp
-MY_CFLAGS := -g -ggdb -O0 -Wall -Werror -DANDROID -std=c++11
+MY_CFLAGS := -g -ggdb -O3 -Wall -Werror -DANDROID -std=c++11
 
 include $(CLEAR_VARS)
 
