@@ -4,7 +4,7 @@ DROID_ROOT := /Users/brettdh/src/android-source
 common_C_INCLUDES := $(DROID_ROOT)/external/bdh_apps/cppunit/include \
                      $(DROID_ROOT)/external/bdh_apps/libcmm
 
-common_CFLAGS:=-g -O3 -Wall -Werror -DANDROID -DNDK_BUILD  -std=c++11
+common_CFLAGS:=-g -O0 -Wall -Werror -DANDROID -DNDK_BUILD  -std=c++11
 common_STATIC_LIBRARIES:=cppunit #libboost_thread
 TESTSUITE_SRCS := ../run_all_tests.cpp ../test_common.cpp
 
