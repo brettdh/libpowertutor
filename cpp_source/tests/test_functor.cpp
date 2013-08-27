@@ -10,7 +10,7 @@ static void print_time(const char *name, int total, int num_calls,
 
 int main()
 {
-    size_t datalen = 1500, bandwidth = 8000, rtt_ms = 200;
+    size_t datalen = 150000, bandwidth = 8000, rtt_ms = 200;
     const char *type_strs[] = {"3G", "wifi"};
     for (NetworkType type : {TYPE_MOBILE, TYPE_WIFI}) {
         fprintf(stderr, "type: %s\n", type_strs[type]);

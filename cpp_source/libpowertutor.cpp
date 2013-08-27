@@ -214,6 +214,20 @@ get_mobile_queue_len(int *down_queue, int *up_queue)
     }
 }
 
+static void get_mobile_queue_len_local(int *queue_len, int *ack_dir_queue_len)
+{
+    bool downlink = power_model_is_remote();
+    if (downlink) {
+        // the handset's downlink queue is the queue we're sending into.
+        //  it will send acks into its uplink queue.
+        get_mobile_queue_len(queue_len, ack_dir_queue_len);
+    } else {
+        // the handset is sending into its uplink queue.
+        //  acks will arrive in its downlink queue.
+        get_mobile_queue_len(ack_dir_queue_len, queue_len);
+    }
+}
+
 static inline double
 time_since(struct timeval then)
 {
@@ -363,26 +377,9 @@ estimate_mobile_energy_cost_from_state(size_t datalen, size_t bandwidth, size_t 
 int 
 estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
-    int queue_len = 0, ack_dir_queue_len = 0;
-
-    bool downlink = power_model_is_remote();
-    if (downlink) {
-        // the handset's downlink queue is the queue we're sending into.
-        //  it will send acks into its uplink queue.
-        get_mobile_queue_len(&queue_len, &ack_dir_queue_len);
-    } else {
-        // the handset is sending into its uplink queue.
-        //  acks will arrive in its downlink queue.
-        get_mobile_queue_len(&ack_dir_queue_len, &queue_len);
-    }
-
-    MobileState old_state = get_mobile_state();
-    double idle_duration = time_since_last_mobile_activity();
-    return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, 
-                                                  old_state, idle_duration,
-                                                  queue_len, ack_dir_queue_len);
+    auto energy_computer = get_energy_computer(TYPE_MOBILE);
+    return energy_computer(datalen, bandwidth, rtt_ms);
 }
-
 
 double
 time_fraction_in_state(MobileState state)
@@ -1078,47 +1075,21 @@ wifi_mtu()
 }
 
 static inline bool
-wifi_high_state(size_t datalen)
+wifi_high_state(int packet_rate, size_t datalen)
 {
-    // estimate whether this transfer will push the radio 
-    //  into the high-power state. (pkts = datalen/MTU)
-    // TODO: figure out if this estimation is accurate based 
-    // TODO:  only on data size and the MTU, or if I need to be more careful.
-    // TODO:  my guess is that this will underestimate the number of packets
-    // TODO:  required for a transmission, because it doesn't include
-    // TODO:  e.g. TCP control messages.
     int cur_packets = datalen / wifi_mtu();
     cur_packets += (datalen % wifi_mtu() > 0) ? 1 : 0; // round up
-    int packet_rate = wifi_packet_rate();
     //LOGD("Wifi packet rate: %d  cur_packets: %d\n", packet_rate, cur_packets);
     return (cur_packets + packet_rate) > powerModel->WIFI_PACKET_RATE_THRESHOLD;
 }
 
+
+
 int 
 estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms)
 {
-    int power = 0;
-    
-    // The wifi radio is only in the transmit state for a very short time,
-    //  and that power consumption is factored into the high/low states'
-    //  power calculation.
-    if (wifi_high_state(datalen)) {
-        power = powerModel->WIFI_HIGH_POWER_BASE + wifi_channel_rate_component();
-    } else {
-        power = powerModel->WIFI_LOW_POWER;
-    }
-    
-    // slightly hacky, but here's what's going on here:
-    // 1) PowerTutor's calculation for the WiFi power model:
-    //    a) Figure out when the wifi is in the high-power state (pkt rate)
-    //    b) Calculate the power draw of that state
-    //    c) Model the wifi as uniform consumption over each second
-    //       that it's in the high-power state.
-    // 2) As a result, even if it was only briefly in the high-power state,
-    //    PowerTutor models the entire second as high-power.
-    // 3) I emulate this by rounding up to the next second before
-    //    multiplying by power.
-    return ceil((((double)datalen) / bandwidth) + (rtt_ms / 1000.0)) * power;
+    auto energy_calculator = get_energy_computer(TYPE_WIFI);
+    return energy_calculator(datalen, bandwidth, rtt_ms);
 }
 
 // XXX: It may be useful/necessary to factor into these calculations how
@@ -1150,10 +1121,53 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
 
 EnergyComputer get_energy_computer(NetworkType type)
 {
-    return [](size_t datalen, size_t bandwidth, size_t rtt_ms) {
-        // TODO: implement
-        return 0;
-    };
+    if (type == TYPE_MOBILE) {
+        int queue_len = 0, ack_dir_queue_len = 0;
+        get_mobile_queue_len_local(&queue_len, &ack_dir_queue_len);
+        
+        MobileState old_state = get_mobile_state();
+        double idle_duration = time_since_last_mobile_activity();
+        return [=](size_t datalen, size_t bandwidth, size_t rtt_ms) {
+            return estimate_mobile_energy_cost_from_state(datalen, bandwidth, rtt_ms, 
+                                                          old_state, idle_duration,
+                                                          queue_len, ack_dir_queue_len);
+        };
+    } else {
+        // estimate whether this transfer will push the radio 
+        //  into the high-power state. (pkts = datalen/MTU)
+        // TODO: figure out if this estimation is accurate based 
+        // TODO:  only on data size and the MTU, or if I need to be more careful.
+        // TODO:  my guess is that this will underestimate the number of packets
+        // TODO:  required for a transmission, because it doesn't include
+        // TODO:  e.g. TCP control messages.
+        int packet_rate = wifi_packet_rate();
+        int channel_rate_component = wifi_channel_rate_component();
+        
+        // The wifi radio is only in the transmit state for a very short time,
+        //  and that power consumption is factored into the high/low states'
+        //  power calculation.
+
+        return [=](size_t datalen, size_t bandwidth, size_t rtt_ms) {
+            int power = 0;
+            if (wifi_high_state(packet_rate, datalen)) {
+                power = powerModel->WIFI_HIGH_POWER_BASE + channel_rate_component;
+            } else {
+                power = powerModel->WIFI_LOW_POWER;
+            }
+    
+            // slightly hacky, but here's what's going on here:
+            // 1) PowerTutor's calculation for the WiFi power model:
+            //    a) Figure out when the wifi is in the high-power state (pkt rate)
+            //    b) Calculate the power draw of that state
+            //    c) Model the wifi as uniform consumption over each second
+            //       that it's in the high-power state.
+            // 2) As a result, even if it was only briefly in the high-power state,
+            //    PowerTutor models the entire second as high-power.
+            // 3) I emulate this by rounding up to the next second before
+            //    multiplying by power.
+            return ceil((((double)datalen) / bandwidth) + (rtt_ms / 1000.0)) * power;
+        };
+    }
 }
 
 
@@ -1267,7 +1281,8 @@ static void update_consumption_stats()
 
     int energy_consumed_this_second_mJ = 0;
 
-    if (wifi_high_state(0)) {
+    int packet_rate = wifi_packet_rate();
+    if (wifi_high_state(packet_rate, 0)) {
         energy_consumed_this_second_mJ +=
             (powerModel->WIFI_HIGH_POWER_BASE + wifi_channel_rate_component());
     } else {
