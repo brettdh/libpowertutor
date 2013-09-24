@@ -1146,19 +1146,31 @@ static double get_and_update_cpu_utilization()
     
     string label;
     ifstream in("/proc/stat");
+    if (!in) {
+        LOGE("Failed to open /proc/stat: %s\n", strerror(errno));
+        return 0;
+    }
     in >> label;
-    if (!in || label != "cpu") {
-        in.close();
+    if (!in) {
+        LOGE("Failed to read first token from /proc/stat\n");
+        return 0;
+    } else if (label != "cpu") {
+        LOGE("Unexpected token '%s' in /proc/stat\n", label.c_str());
         return 0;
     }
 
     double user, user_low_priority, sys, idle, io, irq, softirq;
     in >> user >> user_low_priority >> sys >> idle >> io >> irq >> softirq;
     if (!in) {
-        in.close();
+        LOGE("Failed to parse line from /proc/stat\n");
         return 0;
     }
     in.close();
+
+    /*
+    LOGD("Got fields from /proc/stat: %s %f %f %f %f %f %f %f\n",
+         label.c_str(), user, user_low_priority, sys, idle, io, irq, softirq);
+    */
 
     double user_total, sys_total, total;
     user_total = user + user_low_priority;
@@ -1166,9 +1178,15 @@ static double get_and_update_cpu_utilization()
     total = user_total + sys_total + idle + io;
 
     double user_delta, sys_delta, total_delta;
-    user_delta = last_cpu_user_total - user_total;
-    sys_delta = last_cpu_sys_total - sys_total;
+    user_delta = user_total - last_cpu_user_total;
+    sys_delta = sys_total - last_cpu_sys_total;
     total_delta = max(1.0, total - last_cpu_total);
+
+    /*
+    LOGD("last: usr %f sys %f total %f   now: usr %f sys %f total %f\n",
+         last_cpu_user_total, last_cpu_sys_total, last_cpu_total,
+         user_total, sys_total, total);
+    */
 
     // only called from NetworkStatsUpdateThread, so no lock needed here
     last_cpu_user_total = user_total;
@@ -1176,6 +1194,7 @@ static double get_and_update_cpu_utilization()
     last_cpu_total = total;
     
     double utilization = ((user_delta + sys_delta) / total_delta) * 100;
+    //LOGD("Computed utilization: %.2f\n", utilization);
     return max(0.0, utilization);
 }
 
@@ -1372,8 +1391,10 @@ static void update_consumption_stats()
 
     double utilization = get_and_update_cpu_utilization();
     int cpu_freq = get_cpu_freq(utilization);
-    energy_consumed_this_second_mJ += powerModel->cpu_power_coeff(cpu_freq) * utilization;
-    
+    int cpu_energy = powerModel->cpu_power_coeff(cpu_freq) * utilization;
+    energy_consumed_this_second_mJ += cpu_energy;
+    LOGD("CPU at %.2f utilization, freq %d MHz, consumed %d mJ\n",
+         utilization, cpu_freq, cpu_energy);
 
     PthreadScopedLock lock(&stats_lock);
     energy_consumed_mJ += energy_consumed_this_second_mJ;
