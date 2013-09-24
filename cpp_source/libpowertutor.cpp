@@ -87,6 +87,11 @@ static struct timeval last_mobile_state_change = {0, 0};
 static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
 
+// CPU utilization info.
+static double last_cpu_user_total = 0.0;
+static double last_cpu_sys_total = 0.0;
+static double last_cpu_total = 0.0;
+
 // start idle with a non-zero value so that the 
 //  state weight calculation starts as 100% idle
 static struct timeval time_in_mobile_state[3] = {{1,0}, {0,0}, {0,0}};
@@ -1119,6 +1124,79 @@ int estimate_energy_cost(NetworkType type, // bool downlink,
     return -1;
 }
 
+int estimate_pegged_cpu_energy(double seconds)
+{
+    return powerModel->estimate_pegged_cpu_energy(seconds);
+}
+
+
+// return a value in [0, 100] describing the total CPU utilization
+//  since the last update.
+static double get_and_update_cpu_utilization()
+{
+    // first line of /proc/stat contains stats for computing CPU utilization.
+    // it reads:
+    //    cpu <user> <user-low-priority> <sys> <idle> <i/o> <irq> <soft-irq>
+    // For my calculations:
+    //    utliization = (user + sys) / total
+    //    user = <user> + <user-low-priority>
+    //    sys = <sys> + <irq> + <soft-irq>
+    //    idle = <idle> + <i/o>
+    //    total = user + sys + idle
+    
+    string label;
+    ifstream in("/proc/stat");
+    in >> label;
+    if (!in || label != "cpu") {
+        in.close();
+        return 0;
+    }
+
+    double user, user_low_priority, sys, idle, io, irq, softirq;
+    in >> user >> user_low_priority >> sys >> idle >> io >> irq >> softirq;
+    if (!in) {
+        in.close();
+        return 0;
+    }
+    in.close();
+
+    double user_total, sys_total, total;
+    user_total = user + user_low_priority;
+    sys_total = sys + irq + softirq;
+    total = user_total + sys_total + idle + io;
+
+    double user_delta, sys_delta, total_delta;
+    user_delta = last_cpu_user_total - user_total;
+    sys_delta = last_cpu_sys_total - sys_total;
+    total_delta = max(1.0, total - last_cpu_total);
+
+    // only called from NetworkStatsUpdateThread, so no lock needed here
+    last_cpu_user_total = user_total;
+    last_cpu_sys_total = sys_total;
+    last_cpu_total = total;
+    
+    double utilization = ((user_delta + sys_delta) / total_delta) * 100;
+    return max(0.0, utilization);
+}
+
+// return the current CPU frequency in MHz.
+static int get_cpu_freq(double utilization)
+{
+    if (utilization < 1e-6) {
+        return powerModel->min_cpu_freq;
+    }
+    
+    int cpu_freq_khz;
+    ifstream in("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq");
+    in >> cpu_freq_khz;
+    if (!in) {
+        return powerModel->min_cpu_freq;
+    }
+    
+    return cpu_freq_khz / 1000;
+}
+
+
 EnergyComputer get_energy_computer(NetworkType type)
 {
     if (type == TYPE_MOBILE) {
@@ -1291,6 +1369,11 @@ static void update_consumption_stats()
     
     MobileState state = get_mobile_state();
     energy_consumed_this_second_mJ += powerModel->power_coeff(state);
+
+    double utilization = get_and_update_cpu_utilization();
+    int cpu_freq = get_cpu_freq(utilization);
+    energy_consumed_this_second_mJ += powerModel->cpu_power_coeff(cpu_freq) * utilization;
+    
 
     PthreadScopedLock lock(&stats_lock);
     energy_consumed_mJ += energy_consumed_this_second_mJ;

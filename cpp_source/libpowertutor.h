@@ -43,6 +43,11 @@ CDECL int estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwid
 
 CDECL int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
+// Takes (duration in seconds) and returns an 
+//  energy estimate in mJ for pegging the CPU (highest freq, 100% utilization)
+//  for that duration.  Assumes the CPU would otherwise be idle.
+CDECL int estimate_pegged_cpu_energy(double seconds);
+
 #ifdef __cplusplus
 #include <functional>
 typedef std::function<int(size_t, size_t, size_t)> EnergyComputer;

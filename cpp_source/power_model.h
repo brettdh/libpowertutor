@@ -3,6 +3,8 @@
 
 #include "libpowertutor.h"
 
+#include <map>
+
 enum PowerModelType {
     HTC_DREAM, NEXUS_ONE,
 
@@ -25,6 +27,16 @@ struct PowerModel {
     int power_coeff(MobileState state) {
         return power_coeffs[state];
     }
+
+    // get the power coefficient for the current cpu frequency.
+    double cpu_power_coeff(int freq);
+    
+    // return the estimated energy 
+    double estimate_pegged_cpu_energy(double seconds) {
+        return max_cpu_freq_coeff * seconds;
+    }
+
+    int min_cpu_freq;
 
     // byte queue thresholds for transition to DCH state
     int MOBILE_DCH_THRESHOLD_DOWN;
@@ -58,6 +70,9 @@ protected:
         power_coeffs[MOBILE_POWER_STATE_FACH] = MOBILE_FACH_POWER;
         power_coeffs[MOBILE_POWER_STATE_DCH] = MOBILE_DCH_POWER;
     }
+
+    std::map<int, double> cpu_freq_power_coeffs;
+    double max_cpu_freq_coeff;
 
 private:
     static PowerModel *powerModels[NUM_POWER_MODELS];
