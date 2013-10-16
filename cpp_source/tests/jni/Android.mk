@@ -17,13 +17,13 @@ LOCAL_SRC_FILES := libcppunit.a
 include $(CLEAR_VARS)
 
 LOCAL_MODULE := libpowertutor
-LOCAL_SRC_FILES := ../../obj/local/armeabi/libpowertutor.so
+LOCAL_SRC_FILES := ../../obj/local/$(TARGET_ARCH_ABI)/libpowertutor.so
 include $(PREBUILT_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
 
 LOCAL_MODULE := libmocktime
-LOCAL_SRC_FILES := ../../../../mocktime/obj/local/armeabi/libmocktime.so
+LOCAL_SRC_FILES := ../../../../mocktime/obj/local/$(TARGET_ARCH_ABI)/libmocktime.so
 include $(PREBUILT_SHARED_LIBRARY)
 
 # unit tests
@@ -33,7 +33,7 @@ LOCAL_SRC_FILES := ../test_functor.cpp ../../utils.cpp ../../timeops.cpp
 LOCAL_CFLAGS := $(common_CFLAGS)
 LOCAL_CPP_INCLUDES := $(common_C_INCLUDES)
 LOCAL_SHARED_LIBRARIES := liblog libpowertutor
-LOCAL_LDLIBS := -L./obj/local/armeabi -L$(SYSROOT)/usr/lib -llog
+LOCAL_LDLIBS := -L./obj/local/$(TARGET_ARCH_ABI) -L$(SYSROOT)/usr/lib -llog
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
@@ -47,7 +47,7 @@ LOCAL_CFLAGS := $(common_CFLAGS)
 
 LOCAL_STATIC_LIBRARIES := $(common_STATIC_LIBRARIES) 
 LOCAL_SHARED_LIBRARIES := powertutor mocktime
-LOCAL_LDLIBS := -L./obj/local/armeabi -llog -lmocktime
+LOCAL_LDLIBS := -L./obj/local/$(TARGET_ARCH_ABI) -llog -lmocktime
 LOCAL_PRELINK_MODULE := false
 LOCAL_LDLIBS += -L$(SYSROOT)/usr/lib -llog
 #include $(BUILD_SHARED_LIBRARY)
@@ -61,5 +61,5 @@ LOCAL_SRC_FILES := ../test_sending_estimation.cpp ../../utils.cpp ../../timeops.
 LOCAL_CFLAGS := $(common_CFLAGS)
 LOCAL_C_INCLUDES := $(common_C_INCLUDES)
 LOCAL_SHARED_LIBRARIES := liblog libpowertutor
-LOCAL_LDLIBS := -L./obj/local/armeabi -L$(SYSROOT)/usr/lib -llog -lmocktime
+LOCAL_LDLIBS := -L./obj/local/$(TARGET_ARCH_ABI) -L$(SYSROOT)/usr/lib -llog -lmocktime
 #include $(BUILD_EXECUTABLE)
