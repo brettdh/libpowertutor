@@ -39,7 +39,7 @@
 
 using std::ifstream; using std::hex; using std::string;
 using std::istringstream; using std::ostringstream;
-using std::min; using std::max;
+using std::min; using std::max; using std::fill_n;
 
 static const int TCP_HDR_SIZE = 32;
 static const int IP_HDR_SIZE = 20;
@@ -1274,7 +1274,7 @@ EnergyComputer get_energy_computer(NetworkType type)
 static pthread_mutex_t stats_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct timeval last_reset;
 static struct timeval last_update; // only accessed in NetworkStatsUpdateThread
-static int energy_consumed_mJ = 0;
+static int energy_consumed_mJ[NUM_ENERGY_COMPONENTS];
 static int mobile_data_consumed_bytes = 0;
 
 void reset_stats()
@@ -1283,7 +1283,7 @@ void reset_stats()
         PthreadScopedLock lock(&stats_lock);
         mocktime_gettimeofday(&last_reset, NULL);
         last_update = last_reset;
-        energy_consumed_mJ = 0;
+        fill_n(energy_consumed_mJ, NUM_ENERGY_COMPONENTS, 0);
         mobile_data_consumed_bytes = 0;
     
         mobile_state = MOBILE_POWER_STATE_IDLE;
@@ -1376,28 +1376,36 @@ static void update_consumption_stats()
     }
     last_update = now;
 
-    int energy_consumed_this_second_mJ = 0;
+    int energy_consumed_this_second_mJ[NUM_ENERGY_COMPONENTS];
+    fill_n(energy_consumed_this_second_mJ, NUM_ENERGY_COMPONENTS, 0);
 
     int packet_rate = wifi_packet_rate();
     if (wifi_high_state(packet_rate, 0)) {
-        energy_consumed_this_second_mJ +=
+        energy_consumed_this_second_mJ[NETWORKING] +=
             (powerModel->WIFI_HIGH_POWER_BASE + wifi_channel_rate_component());
     } else {
-        energy_consumed_this_second_mJ += powerModel->WIFI_LOW_POWER;
+        energy_consumed_this_second_mJ[NETWORKING] += powerModel->WIFI_LOW_POWER;
     }
     
     MobileState state = get_mobile_state();
-    energy_consumed_this_second_mJ += powerModel->power_coeff(state);
+    energy_consumed_this_second_mJ[NETWORKING] += powerModel->power_coeff(state);
 
     double utilization = get_and_update_cpu_utilization();
     int cpu_freq = get_cpu_freq(utilization);
     int cpu_energy = powerModel->cpu_power_coeff(cpu_freq) * utilization;
-    energy_consumed_this_second_mJ += cpu_energy;
+    energy_consumed_this_second_mJ[CPU] += cpu_energy;
     LOGD("CPU at %.2f utilization, freq %d MHz, consumed %d mJ\n",
          utilization, cpu_freq, cpu_energy);
 
+    for (int i = 0; i < ALL_ENERGY_COMPONENTS; ++i) {
+        energy_consumed_this_second_mJ[ALL_ENERGY_COMPONENTS] += 
+            energy_consumed_this_second_mJ[i];
+    }
+
     PthreadScopedLock lock(&stats_lock);
-    energy_consumed_mJ += energy_consumed_this_second_mJ;
+    for (int i = 0; i < NUM_ENERGY_COMPONENTS; ++i) {
+        energy_consumed_mJ[i] += energy_consumed_this_second_mJ[i];
+    }
     mobile_data_consumed_bytes += (mobile_last_delta_bytes[0] +
                                    mobile_last_delta_bytes[1]);
     //logPrint("Total energy: %d mJ   Total data: %d bytes\n",
@@ -1408,8 +1416,13 @@ static void update_consumption_stats()
 // returns estimated energy consumed by network interfaces since last reset, in mJ.
 int energy_consumed_since_reset()
 {
+    return energy_consumed_since_reset_by_component(ALL_ENERGY_COMPONENTS);
+}
+
+int energy_consumed_since_reset_by_component(enum EnergyComponent component)
+{
     PthreadScopedLock lock(&stats_lock);
-    return energy_consumed_mJ;
+    return energy_consumed_mJ[component];
 }
 
 int mobile_bytes_consumed_since_reset()
@@ -1421,6 +1434,11 @@ int mobile_bytes_consumed_since_reset()
 // returns average power consumption by network interfaces since last reset, in mW.
 int average_power_consumption_since_reset()
 {
+    return average_power_consumption_since_reset_by_component(ALL_ENERGY_COMPONENTS);
+}
+
+int average_power_consumption_since_reset_by_component(enum EnergyComponent component)
+{
     struct timeval begin, now, diff;
 
     PthreadScopedLock lock(&stats_lock);
@@ -1430,7 +1448,7 @@ int average_power_consumption_since_reset()
     TIMEDIFF(begin, now, diff);
     
     double seconds_since_reset = diff.tv_sec + ((double) diff.tv_usec) / 1000000.0;
-    return energy_consumed_mJ / seconds_since_reset;
+    return energy_consumed_mJ[component] / seconds_since_reset;
 }
 
 

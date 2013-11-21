@@ -6,8 +6,14 @@ public class EnergyEstimates {
     public static native int estimateWifiEnergyCost(int datalen, int bandwidth, int rtt_ms);
     
     // TODO: rename, since there's no longer a 'reset' operation.
-    static native int energyConsumedSinceReset();
-    static native int averagePowerConsumptionSinceReset();
+    static int energyConsumedSinceReset() {
+        return energyConsumedSinceReset(EnergyComponent.ALL_ENERGY_COMPONENTS);
+    }
+    static int energyConsumedSinceReset(EnergyComponent component) {
+        return energyConsumedSinceReset(component.ordinal());
+    }
+    static native int energyConsumedSinceReset(int component);
+    static native int averagePowerConsumptionSinceReset(int component);
     
     static {
         System.loadLibrary("powertutor");

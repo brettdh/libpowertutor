@@ -14,6 +14,12 @@ CDECL enum NetworkType {
     TYPE_WIFI   = 1
 };
 
+CDECL enum EnergyComponent {
+    CPU, NETWORKING, ALL_ENERGY_COMPONENTS,
+
+    NUM_ENERGY_COMPONENTS
+};
+
 enum MobileState {
     MOBILE_POWER_STATE_IDLE=0,
     MOBILE_POWER_STATE_FACH,
@@ -60,14 +66,20 @@ typedef std::function<int(size_t, size_t, size_t)> EnergyComputer;
 EnergyComputer get_energy_computer(NetworkType type);
 #endif
 
-// returns estimated energy consumed by network interfaces since last reset, in mJ.
+// returns estimated energy consumed by all tracked components since last reset, in mJ.
 CDECL int energy_consumed_since_reset();
+
+// returns estimated energy consumed by the given component since last reset, in mJ.
+CDECL int energy_consumed_since_reset_by_component(enum EnergyComponent component);
 
 // return the number of bytes sent on a cellular interface since last reset.
 CDECL int mobile_bytes_consumed_since_reset();
 
-// returns average power consumption by network interfaces since last reset, in mW.
+// returns average power consumption by the given component since last reset, in mW.
 CDECL int average_power_consumption_since_reset();
+
+// returns average power consumption by the given component since last reset, in mW.
+CDECL int average_power_consumption_since_reset_by_component(enum EnergyComponent component);
 
 CDECL void reset_stats();
 
