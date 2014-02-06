@@ -30,16 +30,16 @@ Java_edu_umich_libpowertutor_EnergyEstimates_estimateWifiEnergyCost
 
 JNIEXPORT jint JNICALL
 Java_edu_umich_libpowertutor_EnergyEstimates_energyConsumedSinceReset
-(JNIEnv *jenv, jclass jclass)
+(JNIEnv *jenv, jclass jclass, jint component)
 {
-    return energy_consumed_since_reset();
+    return energy_consumed_since_reset_by_component(EnergyComponent(component));
 }
 
 JNIEXPORT jint JNICALL
 Java_edu_umich_libpowertutor_EnergyEstimates_averagePowerConsumptionSinceReset
-(JNIEnv *jenv, jclass jclass)
+(JNIEnv *jenv, jclass jclass, jint component)
 {
-    return average_power_consumption_since_reset();
+    return average_power_consumption_since_reset_by_component(EnergyComponent(component));
 }
 
 #ifdef __cplusplus

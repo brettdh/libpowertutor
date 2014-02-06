@@ -33,7 +33,9 @@ struct PowerModel {
     
     // return the estimated energy 
     double estimate_pegged_cpu_energy(double seconds) {
-        return max_cpu_freq_coeff * seconds;
+        // power coefficient (mW) = frequency coefficient * utilization (100).
+        // energy = power * time
+        return (max_cpu_freq_coeff * 100) * seconds;
     }
 
     int min_cpu_freq;
