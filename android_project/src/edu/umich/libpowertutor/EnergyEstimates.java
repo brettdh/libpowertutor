@@ -12,6 +12,12 @@ public class EnergyEstimates {
     static int energyConsumedSinceReset(EnergyComponent component) {
         return energyConsumedSinceReset(component.ordinal());
     }
+    static int averagePowerConsumptionSinceReset() {
+        return averagePowerConsumptionSinceReset(EnergyComponent.ALL_ENERGY_COMPONENTS);
+    }
+    static int averagePowerConsumptionSinceReset(EnergyComponent component) {
+        return averagePowerConsumptionSinceReset(component.ordinal());
+    }
     static native int energyConsumedSinceReset(int component);
     static native int averagePowerConsumptionSinceReset(int component);
     
