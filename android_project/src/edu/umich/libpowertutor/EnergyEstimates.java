@@ -22,6 +22,7 @@ public class EnergyEstimates {
     static native int averagePowerConsumptionSinceReset(int component);
     
     static {
+        System.loadLibrary("mocktime");
         System.loadLibrary("powertutor");
     }
 
