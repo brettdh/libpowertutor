@@ -88,9 +88,11 @@ static int mobile_last_bytes[2] = {-1, -1};
 static int mobile_last_delta_bytes[2] = {0, 0};
 
 // CPU utilization info.
+#ifdef ANDROID
 static double last_cpu_user_total = 0.0;
 static double last_cpu_sys_total = 0.0;
 static double last_cpu_total = 0.0;
+#endif
 
 // start idle with a non-zero value so that the 
 //  state weight calculation starts as 100% idle
@@ -1132,6 +1134,7 @@ int estimate_pegged_cpu_energy(double seconds)
 
 // return a value in [0, 100] describing the total CPU utilization
 //  since the last update.
+#ifdef ANDROID
 static double get_and_update_cpu_utilization()
 {
     // first line of /proc/stat contains stats for computing CPU utilization.
@@ -1214,7 +1217,7 @@ static int get_cpu_freq(double utilization)
     
     return cpu_freq_khz / 1000;
 }
-
+#endif
 
 EnergyComputer get_energy_computer(NetworkType type)
 {
