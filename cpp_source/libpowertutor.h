@@ -32,24 +32,18 @@ extern const char *mobile_state_str[];
  * datalen is the length of data to be sent/received.
  * bandwidth is the estimated bandwidth in the direction of the transfer,
  *   in bytes/second.
- * XXX: this is not currently an application-facing abstraction;
- * XXX:  it's going to be used by Intentional Networking.
- * XXX:  Therefore, it's okay to err on the side of exposing too much detail,
- * XXX:  since I might need a lot of detail to make good decisions,
- * XXX:  and a simple abstraction might not be powerful enough.
  */
-CDECL int estimate_energy_cost(NetworkType type, size_t datalen, 
+CDECL int estimate_energy_cost(NetworkType type, size_t datalen,
                                size_t bandwidth, size_t rtt_ms);
 
 CDECL int estimate_mobile_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
+CDECL int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
 
-// ignore the current power state of the radio and 
+// ignore the current power state of the radio and
 //  return the cost considering the average power state.
 CDECL int estimate_mobile_energy_cost_average(size_t datalen, size_t avg_bandwidth, size_t avg_rtt_ms);
 
-CDECL int estimate_wifi_energy_cost(size_t datalen, size_t bandwidth, size_t rtt_ms);
-
-// Takes (duration in seconds) and returns an 
+// Takes (duration in seconds) and returns an
 //  energy estimate in mJ for pegging the CPU (highest freq, 100% utilization)
 //  for that duration.  Assumes the CPU would otherwise be idle.
 CDECL int estimate_pegged_cpu_energy(double seconds);
@@ -83,6 +77,10 @@ CDECL int average_power_consumption_since_reset_by_component(enum EnergyComponen
 
 CDECL void reset_stats();
 
+
+// WARNING: everything below this line should be considered
+//          unsupported and undocumented. It has not been
+//          updated in a while.
 
 struct remote_power_state {
     int mobile_state;
