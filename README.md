@@ -17,6 +17,9 @@ that isolate and exercise various device components.
 
 ## Installation/Build setup
 
+First, clone and set up the lone dependency: [Mocktime][mocktime].
+From there, follow the steps below for your platform.
+
 ### Android
 
 The `android_project` directory contains an Android library that you can use
@@ -73,3 +76,4 @@ that of a 3G radio.
 [powertutor-home]: http://powertutor.org/
 [powertutor-github]: http://github.com/msg555/powertutor
 [imp-paper]: http://bretthiggins.me/papers/mobisys12.pdf
+[mocktime]: /brettdh/mocktime
