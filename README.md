@@ -32,6 +32,19 @@ then add this line to the end of your `Android.mk`:
 
     $(call import-module, edu.umich.mobility/libpowertutor)
 
+### Other
+
+    $ cd cpp_wrapper
+    $ make
+    $ sudo make install
+
+Only tested on Linux; may work on other platforms by happy accident.  Note:
+if you're not running libpowertutor on an Android device, presumably it's because
+it's running in the server at the other end, which is attempting to predict
+the energy impact of sending data back to one of its multiple network addresses.
+It will not be of much use if you are attempting to estimate the energy usage
+of a server.
+
 ## Usage
 
 For Java, you can use the `EnergyUsage` class to track energy usage, either total
