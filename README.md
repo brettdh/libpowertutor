@@ -2,15 +2,15 @@ LibPowerTutor
 =============
 
 This library provides calculation of energy usage according to the
-mobile device power models developed in the [PowerTutor](powertutor-home)
+mobile device power models developed in the [PowerTutor](powertutorhome)
 project. It was developed independently (though also at
 the University of Michigan) for use in the
-[Informed Mobile Prefetching](imp-paper) project.
+[Informed Mobile Prefetching](imppaper) project.
 
 Currently it includes models for the HTC Dream (G1) and the Nexus One phones,
 and the choice of power model is hard-coded to the Nexus One.
 It is designed for easily adding new power models. The [PowerTutor
-Android application](powertutor-github) includes power models for three phones
+Android application](powertutorgithub) includes power models for three phones
 (libpowertutor does not support the HTC Sapphire), and the original paper
 describes a method for deriving power models based on a suite of benchmarks
 that isolate and exercise various device components.
@@ -57,6 +57,6 @@ its estimates may be wildly inaccurate -- particularly if the phone uses
 LTE, since the energy usage of an LTE radio differs significantly from
 that of a 3G radio.
 
-[powertutor-home]: http://powertutor.org/
-[powertutor-github]: http://github.com/msg555/powertutor
-[imp-paper]: http://bretthiggins.me/papers/mobisys12.pdf
+[powertutorhome]: http://powertutor.org/
+[powertutorgithub]: http://github.com/msg555/powertutor
+[imppaper]: http://bretthiggins.me/papers/mobisys12.pdf
