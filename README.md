@@ -76,4 +76,4 @@ that of a 3G radio.
 [powertutor-home]: http://powertutor.org/
 [powertutor-github]: http://github.com/msg555/powertutor
 [imp-paper]: http://bretthiggins.me/papers/mobisys12.pdf
-[mocktime]: /brettdh/mocktime
+[mocktime]: http://github.com/brettdh/mocktime
